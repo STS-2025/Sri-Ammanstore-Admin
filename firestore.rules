@@ -1,0 +1,280 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================================
+    // HELPER FUNCTIONS FOR ROLE & PERMISSION ENFORCEMENT
+    // ==========================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getUserRole() {
+      return getUserData().role;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        getUserRole() == 'super_admin' ||
+        (request.auth.token.role != null && request.auth.token.role == 'super_admin')
+      );
+    }
+
+    function isStoreManager() {
+      return isAuthenticated() && (isSuperAdmin() || getUserRole() == 'store_manager');
+    }
+
+    function isInventoryStaff() {
+      return isAuthenticated() && (isStoreManager() || getUserRole() == 'inventory_staff');
+    }
+
+    function isPackingStaff() {
+      return isAuthenticated() && (isStoreManager() || getUserRole() == 'packing_staff');
+    }
+
+    function isDeliveryManager() {
+      return isAuthenticated() && (isStoreManager() || getUserRole() == 'delivery_manager');
+    }
+
+    function isDeliveryAgent() {
+      return isAuthenticated() && getUserRole() == 'delivery_agent';
+    }
+
+    function isMarketingStaff() {
+      return isAuthenticated() && (isStoreManager() || getUserRole() == 'marketing_staff');
+    }
+
+    function isAccountsStaff() {
+      return isAuthenticated() && (isStoreManager() || getUserRole() == 'accounts_staff');
+    }
+
+    // ==========================================================
+    // USERS & ROLES
+    // ==========================================================
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isStoreManager());
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin() || (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'permissions', 'status']));
+      allow delete: if isSuperAdmin();
+    }
+
+    match /roles/{roleId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+
+    match /permissions/{permissionId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+
+    // ==========================================================
+    // PRODUCT CATALOG & CATEGORIES (Public read for customer store, admin write)
+    // ==========================================================
+    match /products/{productId} {
+      allow read: if true; // Public for e-commerce website
+      allow create, update: if isInventoryStaff() || isStoreManager();
+      allow delete: if isSuperAdmin(); // Destructive action requires Super Admin
+    }
+
+    match /productVariants/{variantId} {
+      allow read: if true;
+      allow create, update: if isInventoryStaff() || isStoreManager();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update: if isStoreManager();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /brands/{brandId} {
+      allow read: if true;
+      allow create, update: if isStoreManager();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ==========================================================
+    // INVENTORY & BATCHES
+    // ==========================================================
+    match /inventory/{inventoryId} {
+      allow read: if isInventoryStaff() || isPackingStaff() || isDeliveryManager();
+      allow write: if isInventoryStaff();
+    }
+
+    match /stockMovements/{movementId} {
+      allow read: if isInventoryStaff() || isAccountsStaff();
+      allow create: if isInventoryStaff();
+      allow update, delete: if isSuperAdmin();
+    }
+
+    match /batches/{batchId} {
+      allow read: if isInventoryStaff() || isPackingStaff();
+      allow write: if isInventoryStaff();
+    }
+
+    // ==========================================================
+    // CUSTOMERS & ADDRESSES
+    // ==========================================================
+    match /customers/{customerId} {
+      allow read: if isStoreManager() || isAccountsStaff() || (isAuthenticated() && request.auth.uid == customerId);
+      allow create: if isAuthenticated();
+      allow update: if isStoreManager() || (isAuthenticated() && request.auth.uid == customerId);
+      allow delete: if isSuperAdmin();
+    }
+
+    match /addresses/{addressId} {
+      allow read: if isStoreManager() || isDeliveryAgent() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      allow write: if isStoreManager() || (isAuthenticated() && request.resource.data.customerId == request.auth.uid);
+    }
+
+    // ==========================================================
+    // ORDERS & FULFILLMENT
+    // ==========================================================
+    match /orders/{orderId} {
+      // Delivery agent can ONLY read orders assigned to them
+      allow read: if isStoreManager() || isPackingStaff() || isAccountsStaff() ||
+                     (isDeliveryAgent() && resource.data.deliveryAgentId == request.auth.uid) ||
+                     (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      
+      allow create: if isAuthenticated(); // Customer app or staff
+      allow update: if isStoreManager() ||
+                       (isPackingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'packedAt', 'packedBy', 'packingNotes'])) ||
+                       (isDeliveryAgent() && resource.data.deliveryAgentId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'deliveryNotes', 'deliveredAt', 'proofOfDeliveryUrl', 'codAmountCollected']));
+      allow delete: if isSuperAdmin();
+    }
+
+    match /orderItems/{itemId} {
+      allow read: if isAuthenticated();
+      allow write: if isStoreManager() || isPackingStaff();
+    }
+
+    match /orderStatusHistory/{historyId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // ==========================================================
+    // DELIVERY & LOGISTICS
+    // ==========================================================
+    match /deliveryAgents/{agentId} {
+      allow read: if isDeliveryManager() || (isDeliveryAgent() && request.auth.uid == agentId);
+      allow write: if isDeliveryManager();
+    }
+
+    match /deliveryBatches/{batchId} {
+      allow read: if isDeliveryManager() || (isDeliveryAgent() && resource.data.agentId == request.auth.uid);
+      allow write: if isDeliveryManager();
+    }
+
+    match /deliveryStops/{stopId} {
+      allow read: if isDeliveryManager() || (isDeliveryAgent() && resource.data.agentId == request.auth.uid);
+      allow write: if isDeliveryManager() || (isDeliveryAgent() && resource.data.agentId == request.auth.uid);
+    }
+
+    // ==========================================================
+    // PAYMENTS, COD & FINANCIALS (Restricted to Accounts & Super Admin)
+    // ==========================================================
+    match /payments/{paymentId} {
+      allow read: if isAccountsStaff() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      allow write: if isAccountsStaff();
+    }
+
+    match /codCollections/{collectionId} {
+      allow read: if isAccountsStaff() || isDeliveryManager() || (isDeliveryAgent() && resource.data.agentId == request.auth.uid);
+      allow create: if isDeliveryAgent() || isAccountsStaff();
+      allow update: if isAccountsStaff(); // Reconciliations
+      allow delete: if isSuperAdmin();
+    }
+
+    match /returns/{returnId} {
+      allow read: if isStoreManager() || isAccountsStaff();
+      allow write: if isStoreManager();
+    }
+
+    match /refunds/{refundId} {
+      allow read: if isAccountsStaff();
+      allow write: if isAccountsStaff(); // High risk
+    }
+
+    // ==========================================================
+    // MARKETING & PROMOTIONS
+    // ==========================================================
+    match /promoCodes/{codeId} {
+      allow read: if true; // Public for validation
+      allow write: if isMarketingStaff();
+    }
+
+    match /promoUsage/{usageId} {
+      allow read: if isMarketingStaff() || isAccountsStaff();
+      allow create: if isAuthenticated();
+      allow update, delete: if isSuperAdmin();
+    }
+
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isMarketingStaff();
+    }
+
+    match /homepageSections/{sectionId} {
+      allow read: if true;
+      allow write: if isMarketingStaff();
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if true;
+      allow write: if isMarketingStaff();
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if isMarketingStaff();
+      allow write: if isMarketingStaff();
+    }
+
+    match /notificationTemplates/{templateId} {
+      allow read: if isMarketingStaff();
+      allow write: if isMarketingStaff();
+    }
+
+    match /notificationLogs/{logId} {
+      allow read: if isMarketingStaff();
+      allow write: if isMarketingStaff();
+    }
+
+    // ==========================================================
+    // CUSTOMER REQUESTS & LOYALTY
+    // ==========================================================
+    match /productRequests/{requestId} {
+      allow read: if isStoreManager() || isMarketingStaff();
+      allow create: if isAuthenticated();
+      allow update: if isStoreManager() || isMarketingStaff();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /smartCoinTransactions/{txId} {
+      allow read: if isAccountsStaff() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      allow write: if isAccountsStaff();
+    }
+
+    // ==========================================================
+    // AUDIT LOGS & SETTINGS
+    // ==========================================================
+    match /activityLogs/{logId} {
+      allow read: if isSuperAdmin() || isStoreManager();
+      allow create: if isAuthenticated(); // All staff actions logged
+      allow update, delete: if false; // Immutable audit trail
+    }
+
+    match /businessSettings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin(); // Financial/owner settings strictly Super Admin
+    }
+  }
+}

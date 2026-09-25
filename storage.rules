@@ -1,0 +1,59 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isImageFile() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isReasonableSize() {
+      return request.resource.size < 10 * 1024 * 1024; // 10MB max
+    }
+
+    // Product Images & Media: Public read, Staff write
+    match /products/{productId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isReasonableSize();
+    }
+
+    // Banners & Promotional Graphics: Public read, Marketing write
+    match /banners/{bannerId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+    }
+
+    // Customer Profiles: Owner read/write, Staff read
+    match /customers/{customerId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (request.auth.uid == customerId || request.auth.token.role != null) && isImageFile() && isReasonableSize();
+    }
+
+    // Order Documents / Invoices: Authenticated staff and customer
+    match /orders/{orderId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isReasonableSize();
+    }
+
+    // Delivery Proof (Photos/Signatures): Delivery agent upload, staff read
+    match /deliveryProof/{orderId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+    }
+
+    // Return Photos: Customer & Staff upload
+    match /returns/{returnId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+    }
+
+    // Staff Photos
+    match /staff/{staffId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+    }
+  }
+}
