@@ -25,6 +25,7 @@ export const LoginPage = () => {
     name: '',
     email: '',
     phone: '',
+    vehicleNumber: '',
     role: ROLES.DELIVERY_AGENT,
     password: '',
     confirmPassword: ''
@@ -112,6 +113,7 @@ export const LoginPage = () => {
         displayName: signupForm.name,
         role: assignedRole,
         phone: signupForm.phone || '+91 98765 00000',
+        vehicleNumber: signupForm.vehicleNumber || 'TN 37 CB 1234',
         status: 'active'
       };
 
@@ -361,6 +363,27 @@ export const LoginPage = () => {
                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
                 </div>
               </div>
+
+              {/* Conditional Bike / Vehicle Registration Number for Delivery Agents */}
+              {signupForm.role === ROLES.DELIVERY_AGENT && (
+                <div>
+                  <label className="input-label" htmlFor="signup-vehicle">
+                    Bike / Vehicle Registration Number
+                  </label>
+                  <div className="relative">
+                    <Truck className="w-4 h-4 text-emerald-600 absolute left-3 top-3 pointer-events-none" />
+                    <input
+                      id="signup-vehicle"
+                      type="text"
+                      required
+                      value={signupForm.vehicleNumber}
+                      onChange={(e) => setSignupForm({ ...signupForm, vehicleNumber: e.target.value.toUpperCase() })}
+                      placeholder="e.g. TN 37 AB 9876"
+                      className="input-text pl-9 uppercase font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="input-label" htmlFor="signup-password">
