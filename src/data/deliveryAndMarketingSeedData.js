@@ -75,15 +75,15 @@ export const INITIAL_DELIVERY_BATCHES = [
     agentId: 'agent-01',
     agentName: 'Saravanan Muthusamy',
     status: 'in_transit', // 'draft' | 'assigned' | 'in_transit' | 'completed'
-    orderIds: ['ORD-9842', 'ORD-9841', 'ORD-9840'],
-    totalOrders: 3,
-    totalWeightKg: 34.5,
+    orderIds: ['ORD-9841', 'ORD-9840'],
+    totalOrders: 2,
+    totalWeightKg: 28.5,
     maxWeightCapacityKg: 50.0,
-    totalCodExpected: 1780.00,
+    totalCodExpected: 540.00,
     totalCodCollected: 540.00,
     clusterLocality: 'RS Puram & Gandhipuram Central',
-    estimatedDistanceKm: 8.5,
-    estimatedMinutes: 45,
+    estimatedDistanceKm: 6.5,
+    estimatedMinutes: 35,
     createdAt: '2026-09-24T05:30:00Z',
     stops: [
       {
@@ -109,19 +109,6 @@ export const INITIAL_DELIVERY_BATCHES = [
         paymentMethod: 'UPI',
         codAmount: 0.00,
         status: 'reached',
-        otpVerified: false,
-        deliveredAt: null
-      },
-      {
-        sequenceNumber: 3,
-        orderId: 'ORD-9842',
-        customerName: 'Murugan Selvam',
-        phone: '+91 96290 88990',
-        address: '82, Avinashi Road, Peelamedu',
-        locality: 'Peelamedu',
-        paymentMethod: 'COD',
-        codAmount: 1240.00,
-        status: 'pending',
         otpVerified: false,
         deliveredAt: null
       }

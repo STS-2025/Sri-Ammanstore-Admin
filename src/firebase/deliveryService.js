@@ -36,7 +36,25 @@ const getStoredBatches = () => {
       localStorage.setItem(BATCHES_STORAGE_KEY, JSON.stringify(INITIAL_DELIVERY_BATCHES));
       return INITIAL_DELIVERY_BATCHES;
     }
-    return JSON.parse(raw);
+    const batches = JSON.parse(raw);
+    // Sanity filter: Clean out pre-seeded ORD-9842 from batch-cbe-01 so packed ORD-9842 is dispatchable
+    let cleaned = false;
+    batches.forEach(b => {
+      if (b.id === 'batch-cbe-01') {
+        const has9842InOrderIds = (b.orderIds || []).includes('ORD-9842');
+        const has9842InStops = (b.stops || []).some(s => s.orderId === 'ORD-9842');
+        if (has9842InOrderIds || has9842InStops) {
+          b.orderIds = (b.orderIds || []).filter(id => id !== 'ORD-9842');
+          b.stops = (b.stops || []).filter(s => s.orderId !== 'ORD-9842');
+          b.totalOrders = b.stops.length;
+          cleaned = true;
+        }
+      }
+    });
+    if (cleaned) {
+      localStorage.setItem(BATCHES_STORAGE_KEY, JSON.stringify(batches));
+    }
+    return batches;
   } catch (e) {
     return INITIAL_DELIVERY_BATCHES;
   }
