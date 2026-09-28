@@ -296,16 +296,18 @@ export const ProductsPage = () => {
       align: 'right',
       render: (row) => (
         <div className="flex items-center justify-end gap-1.5">
-          <button
-            onClick={() => {
-              setEditingProduct(row);
-              setFormModalOpen(true);
-            }}
-            className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition-colors"
-            title="Edit Product"
-          >
-            <Edit className="w-3.5 h-3.5" />
-          </button>
+          <PermissionGuard permission={PERMISSIONS.PRODUCTS_EDIT}>
+            <button
+              onClick={() => {
+                setEditingProduct(row);
+                setFormModalOpen(true);
+              }}
+              className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition-colors"
+              title="Edit Product"
+            >
+              <Edit className="w-3.5 h-3.5" />
+            </button>
+          </PermissionGuard>
 
           <PermissionGuard permission={PERMISSIONS.PRODUCTS_PRICE_CHANGE}>
             <button
@@ -320,13 +322,15 @@ export const ProductsPage = () => {
             </button>
           </PermissionGuard>
 
-          <button
-            onClick={() => handleDuplicate(row)}
-            className="p-1.5 text-slate-600 hover:text-blue-700 hover:bg-slate-100 rounded-lg transition-colors"
-            title="Duplicate Product"
-          >
-            <Copy className="w-3.5 h-3.5" />
-          </button>
+          <PermissionGuard permission={PERMISSIONS.PRODUCTS_EDIT}>
+            <button
+              onClick={() => handleDuplicate(row)}
+              className="p-1.5 text-slate-600 hover:text-blue-700 hover:bg-slate-100 rounded-lg transition-colors"
+              title="Duplicate Product"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+          </PermissionGuard>
 
           <PermissionGuard permission={PERMISSIONS.PRODUCTS_DELETE}>
             <button

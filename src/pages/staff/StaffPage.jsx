@@ -399,50 +399,52 @@ export const StaffPage = () => {
       align: 'right',
       render: (row) => (
         <div className="flex items-center justify-end gap-1.5">
-          {row.role !== ROLES.SUPER_ADMIN && (
+          <PermissionGuard permission={PERMISSIONS.STAFF_MANAGE}>
+            {row.role !== ROLES.SUPER_ADMIN && (
+              <button
+                type="button"
+                onClick={() => handleOpenDelegateModal(row)}
+                className="p-1.5 text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold"
+                title="Delegate Owner Access (Temporary)"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-purple-600" />
+                <span className="hidden xl:inline">Delegate Access</span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => handleOpenDelegateModal(row)}
-              className="p-1.5 text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold"
-              title="Delegate Owner Access (Temporary)"
+              onClick={() => handleOpenEdit(row)}
+              className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+              title="Edit Staff Member"
             >
-              <KeyRound className="w-3.5 h-3.5 text-purple-600" />
-              <span className="hidden xl:inline">Delegate Access</span>
+              <Edit2 className="w-3.5 h-3.5" />
             </button>
-          )}
 
-          <button
-            type="button"
-            onClick={() => handleOpenEdit(row)}
-            className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-            title="Edit Staff Member"
-          >
-            <Edit2 className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleToggleStatus(row)}
-            className={`p-1.5 rounded-lg transition-colors ${
-              row.status === 'active'
-                ? 'text-amber-600 hover:bg-amber-50'
-                : 'text-emerald-600 hover:bg-emerald-50'
-            }`}
-            title={row.status === 'active' ? 'Disable Account' : 'Enable Account'}
-          >
-            <Power className="w-3.5 h-3.5" />
-          </button>
-
-          {row.role !== ROLES.SUPER_ADMIN && (
             <button
               type="button"
-              onClick={() => handleDeleteStaff(row)}
-              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-              title="Delete Staff"
+              onClick={() => handleToggleStatus(row)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                row.status === 'active'
+                  ? 'text-amber-600 hover:bg-amber-50'
+                  : 'text-emerald-600 hover:bg-emerald-50'
+              }`}
+              title={row.status === 'active' ? 'Disable Account' : 'Enable Account'}
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Power className="w-3.5 h-3.5" />
             </button>
-          )}
+
+            {row.role !== ROLES.SUPER_ADMIN && (
+              <button
+                type="button"
+                onClick={() => handleDeleteStaff(row)}
+                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                title="Delete Staff"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </PermissionGuard>
         </div>
       )
     }
