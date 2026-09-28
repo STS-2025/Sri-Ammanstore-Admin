@@ -187,7 +187,28 @@ export const DeliveryPage = () => {
         })
       : agents.find(a => a.id === simulatedAgentId) || agents[0];
 
-    const riderBatch = batches.find(b => b.agentId === activeAgent?.id && b.status !== 'completed');
+    const riderAgentEmail = (activeAgent?.email || currentUser?.email || '').trim().toLowerCase();
+    const riderAgentName = (activeAgent?.name || currentUser?.displayName || currentUser?.name || '').trim().toLowerCase();
+
+    const riderBatch = batches.find(b => {
+      const isNotFinished = b.status !== 'completed' && b.status !== 'cancelled';
+      if (!isNotFinished) return false;
+
+      const matchesId = 
+        (b.agentId && activeAgent?.id && b.agentId === activeAgent.id) ||
+        (b.agentId && activeAgent?.uid && b.agentId === activeAgent.uid) ||
+        (b.id && activeAgent?.currentBatchId && b.id === activeAgent.currentBatchId);
+
+      const matchesEmail = 
+        b.agentEmail && riderAgentEmail && 
+        b.agentEmail.trim().toLowerCase() === riderAgentEmail;
+
+      const matchesName = 
+        b.agentName && riderAgentName && riderAgentName !== 'delivery rider' &&
+        b.agentName.trim().toLowerCase() === riderAgentName;
+
+      return matchesId || matchesEmail || matchesName;
+    });
 
     return (
       <div className="py-4">

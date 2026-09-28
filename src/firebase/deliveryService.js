@@ -305,13 +305,20 @@ export const createDeliveryBatch = async (batchData, user) => {
   saveStoredBatches(batches);
 
   // If assigned to agent, update agent's active load
-  if (newBatch.agentId) {
+  if (newBatch.agentId || newBatch.agentEmail || newBatch.agentName) {
     const agents = getStoredAgents();
-    const agIndex = agents.findIndex(a => a.id === newBatch.agentId);
+    const userEmail = (newBatch.agentEmail || '').trim().toLowerCase();
+    const userName = (newBatch.agentName || '').trim().toLowerCase();
+
+    const agIndex = agents.findIndex(a => 
+      (newBatch.agentId && a.id === newBatch.agentId) ||
+      (a.email && userEmail && a.email.trim().toLowerCase() === userEmail) ||
+      (a.name && userName && userName !== 'unassigned rider' && a.name.trim().toLowerCase() === userName)
+    );
     if (agIndex !== -1) {
       agents[agIndex].status = 'on_delivery';
       agents[agIndex].currentBatchId = newBatch.id;
-      agents[agIndex].assignedOrdersCount += newBatch.totalOrders;
+      agents[agIndex].assignedOrdersCount = (agents[agIndex].assignedOrdersCount || 0) + newBatch.totalOrders;
       saveStoredAgents(agents);
     }
   }

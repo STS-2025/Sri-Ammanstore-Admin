@@ -115,6 +115,7 @@ export const DeliveryBatchModal = ({ isOpen, onClose, onSave, availableOrders = 
     const batchPayload = {
       agentId: assignedAgentId,
       agentName: assignedAgent ? assignedAgent.name : 'Unassigned Rider',
+      agentEmail: assignedAgent ? (assignedAgent.email || '') : '',
       status: 'assigned',
       orderIds: orderedStops.map(s => s.orderId),
       totalOrders: capacityCheck.totalOrders,
