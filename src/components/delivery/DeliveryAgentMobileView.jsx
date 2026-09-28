@@ -93,7 +93,7 @@ export const DeliveryAgentMobileView = ({
   return (
     <div className="max-w-md mx-auto bg-slate-100 min-h-screen pb-16 shadow-2xl border-x border-slate-200">
       {/* Top Mobile Bar */}
-      <div className="bg-slate-900 text-white p-4 sticky top-0 z-30 shadow-md">
+      <div className="bg-slate-900 text-white p-4 sticky top-16 z-20 shadow-md">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             {onCloseSimulation && (

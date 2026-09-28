@@ -73,7 +73,7 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
   };
 
   return (
-    <header className="h-16 bg-white border-b border-slate-200 sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6 shadow-subtle">
+    <header className="h-16 bg-white border-b border-slate-200 sticky top-0 z-50 flex items-center justify-between px-4 sm:px-6 shadow-subtle">
       {/* Left: Mobile Menu Toggle & Global Search Trigger */}
       <div className="flex items-center gap-3 flex-1 max-w-xl">
         <button
@@ -179,7 +179,7 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
           </button>
 
           {notificationDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-dropdown border border-slate-200 p-4 z-50 animate-in fade-in zoom-in-95">
+            <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 animate-in fade-in zoom-in-95">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-2">
                 <span className="text-xs font-bold text-slate-900">Operational Alerts</span>
                 <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
