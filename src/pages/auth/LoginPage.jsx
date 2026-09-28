@@ -8,6 +8,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { DEMO_USERS } from '../../firebase/authService';
 import { ROLES, ROLE_DEFINITIONS } from '../../utils/roles';
 import { useNotification } from '../../context/NotificationContext';
+import { ensureDeliveryAgentRegistered } from '../../firebase/deliveryService';
 
 export const LoginPage = () => {
   // Tab state: 'login' | 'signup'
@@ -69,6 +70,15 @@ export const LoginPage = () => {
       const activeUserRole = selectedRole || user.role || ROLES.SUPER_ADMIN;
       const roleDef = ROLE_DEFINITIONS[activeUserRole];
 
+      // Automatically sync newly registered or logged in delivery agents into dispatch fleet roster
+      await ensureDeliveryAgentRegistered({
+        uid: user.uid || `ag-${Date.now()}`,
+        displayName: user.displayName || user.name || 'Delivery Rider',
+        email: user.email,
+        phone: user.phone || '+91 98401 22334',
+        role: activeUserRole
+      });
+
       notify.success(
         'Welcome Back', 
         `Signed in successfully as ${roleDef?.name || 'Staff Member'}.`
@@ -112,6 +122,9 @@ export const LoginPage = () => {
 
       // Register into local demo directory
       DEMO_USERS[assignedRole] = newStaffUser;
+
+      // Automatically sync new delivery agent into Admin Dispatch Fleet roster so orders can be assigned immediately
+      await ensureDeliveryAgentRegistered(newStaffUser);
 
       // Switch active role to the newly registered role
       switchDemoRole(assignedRole);
@@ -210,7 +223,7 @@ export const LoginPage = () => {
                   >
                     {Object.values(ROLE_DEFINITIONS).map((def) => (
                       <option key={def.id} value={def.id}>
-                        {def.name} ({def.permissions.length} capabilities)
+                        {def.name}
                       </option>
                     ))}
                   </select>

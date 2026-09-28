@@ -123,6 +123,51 @@ export const createDeliveryAgent = async (agentData, user) => {
 };
 
 /**
+ * Ensures newly registered or logged in delivery agents are synced into the fleet roster
+ */
+export const ensureDeliveryAgentRegistered = async (user) => {
+  if (!user || user.role !== 'delivery_agent') return;
+  const agents = getStoredAgents();
+  const agentId = user.uid || user.id || `agent-${(user.email || 'rider').replace(/[^a-zA-Z0-9]/g, '')}`;
+  const exists = agents.some(a => a.id === agentId || (a.email && user.email && a.email.toLowerCase() === user.email.toLowerCase()));
+
+  if (!exists) {
+    const newAgent = {
+      id: agentId,
+      name: user.displayName || user.name || 'New Delivery Agent',
+      email: user.email || '',
+      phone: user.phone || '+91 98401 22334',
+      status: 'available',
+      vehicleType: 'two_wheeler',
+      vehicleNumber: 'TN 37 CB ' + Math.floor(1000 + Math.random() * 9000),
+      zone: 'Coimbatore Hub',
+      assignedOrdersCount: 0,
+      completedToday: 0,
+      failedToday: 0,
+      codCollectedToday: 0,
+      codDepositedToday: 0,
+      rating: 5.0,
+      currentBatchId: null,
+      createdAt: new Date().toISOString()
+    };
+    agents.unshift(newAgent);
+    saveStoredAgents(agents);
+
+    if (isFirebaseConfigured) {
+      try {
+        await setDoc(doc(db, COLLECTIONS.DELIVERY_AGENTS, newAgent.id), {
+          ...newAgent,
+          createdAt: serverTimestamp()
+        });
+      } catch (e) {
+        console.warn('Firestore auto agent sync failed:', e);
+      }
+    }
+    return newAgent;
+  }
+};
+
+/**
  * Update delivery agent profile
  */
 export const updateDeliveryAgent = async (agentId, updates, user) => {

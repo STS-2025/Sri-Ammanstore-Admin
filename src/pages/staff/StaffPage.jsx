@@ -15,6 +15,7 @@ import { DEMO_USERS } from '../../firebase/authService';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { logActivity } from '../../firebase/auditLogger';
+import { ensureDeliveryAgentRegistered } from '../../firebase/deliveryService';
 
 const STAFF_LOCAL_KEY = 'grocery_admin_staff_list_v5';
 
@@ -220,6 +221,17 @@ export const StaffPage = () => {
         { updates: formData }
       );
 
+      // If role is delivery_agent, auto-sync into fleet dispatch roster
+      if (formData.role === ROLES.DELIVERY_AGENT) {
+        await ensureDeliveryAgentRegistered({
+          uid: selectedStaffForEdit.uid,
+          displayName: formData.name,
+          email: formData.email,
+          phone: formData.phone,
+          role: ROLES.DELIVERY_AGENT
+        });
+      }
+
       notify.success('Staff Updated', `${formData.name}'s profile was updated.`);
       setIsEditModalOpen(false);
       setSelectedStaffForEdit(null);
@@ -237,6 +249,11 @@ export const StaffPage = () => {
       };
 
       setStaffList(prev => [newStaff, ...prev]);
+
+      // If role is delivery_agent, auto-sync into fleet dispatch roster
+      if (formData.role === ROLES.DELIVERY_AGENT) {
+        await ensureDeliveryAgentRegistered(newStaff);
+      }
 
       await logActivity(
         currentUser || { id: 'admin', name: 'Super Admin' },
