@@ -28,6 +28,15 @@ import { ReportsPage } from '../pages/reports/ReportsPage';
 import { NotFoundPage } from '../pages/notFound/NotFoundPage';
 
 import { PERMISSIONS } from '../utils/permissions';
+import { ROLE_DEFINITIONS } from '../utils/roles';
+import { useAuth } from '../hooks/useAuth';
+
+const IndexRedirect = () => {
+  const { userRole } = useAuth();
+  const roleDef = ROLE_DEFINITIONS[userRole];
+  const targetRoute = roleDef?.defaultRoute || '/dashboard';
+  return <Navigate to={targetRoute} replace />;
+};
 
 export const AppRoutes = () => {
   return (
@@ -45,7 +54,7 @@ export const AppRoutes = () => {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route index element={<IndexRedirect />} />
 
         {/* Dashboard */}
         <Route

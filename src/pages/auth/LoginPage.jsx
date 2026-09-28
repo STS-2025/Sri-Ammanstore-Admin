@@ -26,9 +26,16 @@ export const LoginPage = () => {
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
+      const user = await login(email, password);
       notify.success('Welcome Back', 'Successfully authenticated into Sri Amman Store Admin.');
-      navigate(from, { replace: true });
+      
+      const roleDef = ROLE_DEFINITIONS[user.role];
+      const defaultPath = roleDef?.defaultRoute || '/dashboard';
+      const targetPath = (location.state?.from?.pathname && location.state.from.pathname !== '/dashboard')
+        ? location.state.from.pathname
+        : defaultPath;
+
+      navigate(targetPath, { replace: true });
     } catch (err) {
       setError(err.message || 'Authentication failed. Please verify credentials.');
     } finally {
