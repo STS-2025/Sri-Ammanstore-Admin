@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   Store, Lock, Mail, ArrowRight, Shield, AlertCircle, Eye, EyeOff,
-  User, UserPlus, ChevronDown, CheckCircle2, Phone
+  User, UserPlus, ChevronDown, CheckCircle2, Phone, Truck
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { DEMO_USERS } from '../../firebase/authService';
+import { DEMO_USERS, saveRegisteredUser } from '../../firebase/authService';
 import { ROLES, ROLE_DEFINITIONS } from '../../utils/roles';
 import { useNotification } from '../../context/NotificationContext';
 import { ensureDeliveryAgentRegistered } from '../../firebase/deliveryService';
@@ -57,34 +57,34 @@ export const LoginPage = () => {
     setIsSubmitting(true);
 
     try {
-      // Sync demo role preview if applicable
-      if (selectedRole) {
-        switchDemoRole(selectedRole);
-      }
-
-      const user = await login(email, password);
-      const activeUserRole = selectedRole || user.role || ROLES.SUPER_ADMIN;
+      // 1. Authenticate user (fallbackRole is selectedRole if user is not pre-registered)
+      const user = await login(email, password, selectedRole);
+      
+      // 2. The user's actual account role MUST take absolute priority over selectedRole
+      const activeUserRole = user?.role || selectedRole || ROLES.SUPER_ADMIN;
       const roleDef = ROLE_DEFINITIONS[activeUserRole];
 
-      // Automatically sync newly registered or logged in delivery agents into dispatch fleet roster
-      await ensureDeliveryAgentRegistered({
-        uid: user.uid || `ag-${Date.now()}`,
-        displayName: user.displayName || user.name || 'Delivery Rider',
-        email: user.email,
-        phone: user.phone || '+91 98401 22334',
-        role: activeUserRole
-      });
+      // 3. Update active operational role in AuthContext
+      switchDemoRole(activeUserRole);
+
+      // 4. If logged in user is a delivery agent, sync into Admin Dispatch Fleet roster
+      if (activeUserRole === ROLES.DELIVERY_AGENT) {
+        await ensureDeliveryAgentRegistered({
+          uid: user.uid || `ag-${Date.now()}`,
+          displayName: user.displayName || user.name || 'Delivery Rider',
+          email: user.email,
+          phone: user.phone || '+91 98401 22334',
+          role: activeUserRole
+        });
+      }
 
       notify.success(
         'Welcome Back', 
         `Signed in successfully as ${roleDef?.name || 'Staff Member'}.`
       );
 
-      const defaultPath = roleDef?.defaultRoute || '/dashboard';
-      const targetPath = (location.state?.from?.pathname && location.state.from.pathname !== '/dashboard')
-        ? location.state.from.pathname
-        : defaultPath;
-
+      // 5. Navigate strictly to role's authorized default home screen
+      const targetPath = roleDef?.defaultRoute || '/dashboard';
       navigate(targetPath, { replace: true });
     } catch (err) {
       setError(err.message || 'Authentication failed. Please verify credentials.');
@@ -117,15 +117,17 @@ export const LoginPage = () => {
         status: 'active'
       };
 
-      // Register into local demo directory
-      DEMO_USERS[assignedRole] = newStaffUser;
+      // 1. Save user to persistent local storage registry
+      saveRegisteredUser(newStaffUser);
 
-      // Automatically sync new delivery agent into Admin Dispatch Fleet roster so orders can be assigned immediately
-      await ensureDeliveryAgentRegistered(newStaffUser);
+      // 2. Automatically sync new delivery agent into Admin Dispatch Fleet roster so orders can be assigned immediately
+      if (assignedRole === ROLES.DELIVERY_AGENT) {
+        await ensureDeliveryAgentRegistered(newStaffUser);
+      }
 
-      // Switch active role to the newly registered role
+      // 3. Switch active role and complete login
       switchDemoRole(assignedRole);
-      await login(signupForm.email, signupForm.password || 'password123');
+      await login(signupForm.email, signupForm.password || 'password123', assignedRole);
 
       const roleDef = ROLE_DEFINITIONS[assignedRole];
       notify.success(

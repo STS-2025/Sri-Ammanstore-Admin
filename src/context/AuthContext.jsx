@@ -64,10 +64,10 @@ export const AuthProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (email, password, fallbackRole = null) => {
     setLoading(true);
     try {
-      const user = await loginWithEmail(email, password);
+      const user = await loginWithEmail(email, password, fallbackRole);
       if (!isFirebaseConfigured) {
         setCurrentUser(user);
         setUserProfile(user);
@@ -75,6 +75,9 @@ export const AuthProvider = ({ children }) => {
         setAuthenticatedRole(user.role);
         setPermissions(ROLE_DEFINITIONS[user.role]?.permissions || []);
         localStorage.setItem('grocery_admin_active_role', user.role);
+        if (user.email) {
+          localStorage.setItem('grocery_admin_active_user_email', user.email);
+        }
       }
       await logActivity({
         userId: user.uid,
@@ -109,6 +112,7 @@ export const AuthProvider = ({ children }) => {
       setAuthenticatedRole(null);
       setPermissions([]);
       localStorage.removeItem('grocery_admin_active_role');
+      localStorage.removeItem('grocery_admin_active_user_email');
     }
   };
 

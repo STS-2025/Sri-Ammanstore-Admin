@@ -10,6 +10,41 @@ import { COLLECTIONS } from './collections';
 import { ROLES, ROLE_DEFINITIONS } from '../utils/roles';
 
 /**
+ * Local Storage Key for Registered Staff Users
+ */
+const REGISTERED_USERS_KEY = 'grocery_admin_registered_users';
+
+export const getRegisteredUsers = () => {
+  try {
+    const saved = localStorage.getItem(REGISTERED_USERS_KEY);
+    return saved ? JSON.parse(saved) : [];
+  } catch (err) {
+    console.error('[authService] Error parsing registered users:', err);
+    return [];
+  }
+};
+
+export const saveRegisteredUser = (user) => {
+  try {
+    const users = getRegisteredUsers();
+    const cleanEmail = (user.email || '').trim().toLowerCase();
+    const existingIndex = users.findIndex((u) => u.email.trim().toLowerCase() === cleanEmail);
+    if (existingIndex >= 0) {
+      users[existingIndex] = { ...users[existingIndex], ...user };
+    } else {
+      users.push(user);
+    }
+    localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
+
+    if (user.role && DEMO_USERS[user.role]) {
+      DEMO_USERS[user.role] = { ...DEMO_USERS[user.role], ...user };
+    }
+  } catch (err) {
+    console.error('[authService] Error saving registered user:', err);
+  }
+};
+
+/**
  * Pre-configured Development / Demo Users for the 8 Grocery Roles
  */
 export const DEMO_USERS = {
@@ -80,13 +115,36 @@ export const DEMO_USERS = {
 };
 
 /**
- * Sign in with email and password via Firebase Auth
+ * Sign in with email and password via Firebase Auth or Dev Registry
  */
-export const loginWithEmail = async (email, password) => {
+export const loginWithEmail = async (email, password, fallbackRole = null) => {
   if (!isFirebaseConfigured) {
-    // Development fallback: match demo user by email or default to Super Admin
-    const foundDemo = Object.values(DEMO_USERS).find((u) => u.email.toLowerCase() === email.toLowerCase());
-    return foundDemo || DEMO_USERS[ROLES.SUPER_ADMIN];
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    // 1. Check registered users in localStorage
+    const registered = getRegisteredUsers();
+    const foundRegistered = registered.find((u) => u.email.trim().toLowerCase() === cleanEmail);
+    if (foundRegistered) {
+      return foundRegistered;
+    }
+
+    // 2. Check preconfigured DEMO_USERS
+    const foundDemo = Object.values(DEMO_USERS).find((u) => u.email.trim().toLowerCase() === cleanEmail);
+    if (foundDemo) {
+      return foundDemo;
+    }
+
+    // 3. Fallback: Generate user profile dynamically using fallbackRole if provided, else SUPER_ADMIN
+    const targetRole = fallbackRole || ROLES.SUPER_ADMIN;
+    const dynamicUser = {
+      uid: `staff-${Date.now()}`,
+      email: cleanEmail || 'staff@sriammanstore.com',
+      displayName: cleanEmail ? cleanEmail.split('@')[0] : 'Staff Member',
+      role: targetRole,
+      status: 'active'
+    };
+    saveRegisteredUser(dynamicUser);
+    return dynamicUser;
   }
   const userCredential = await signInWithEmailAndPassword(auth, email, password);
   return userCredential.user;
@@ -111,10 +169,14 @@ export const resetPassword = async (email) => {
 };
 
 /**
- * Fetch user profile from Firestore `users` collection
+ * Fetch user profile from Firestore `users` collection or Dev Registry
  */
 export const fetchUserProfile = async (uid) => {
   if (!isFirebaseConfigured) {
+    const registered = getRegisteredUsers();
+    const foundReg = registered.find((u) => u.uid === uid);
+    if (foundReg) return foundReg;
+
     const demo = Object.values(DEMO_USERS).find((u) => u.uid === uid) || DEMO_USERS[ROLES.SUPER_ADMIN];
     return demo;
   }
@@ -131,9 +193,15 @@ export const fetchUserProfile = async (uid) => {
  */
 export const subscribeToAuth = (callback) => {
   if (!isFirebaseConfigured) {
-    // Read cached demo user if any
     const savedRole = localStorage.getItem('grocery_admin_active_role') || ROLES.SUPER_ADMIN;
-    const initialUser = DEMO_USERS[savedRole] || DEMO_USERS[ROLES.SUPER_ADMIN];
+    const savedUserEmail = localStorage.getItem('grocery_admin_active_user_email');
+    
+    const registered = getRegisteredUsers();
+    const matchedRegisteredUser = savedUserEmail 
+      ? registered.find((u) => u.email.trim().toLowerCase() === savedUserEmail.trim().toLowerCase())
+      : registered.find((u) => u.role === savedRole);
+
+    const initialUser = matchedRegisteredUser || DEMO_USERS[savedRole] || DEMO_USERS[ROLES.SUPER_ADMIN];
     callback(initialUser);
     return () => {};
   }
