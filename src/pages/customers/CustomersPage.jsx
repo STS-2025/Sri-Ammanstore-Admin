@@ -27,7 +27,18 @@ import {
   FileText,
   Edit,
   Save,
-  Check
+  Check,
+  Download,
+  BellRing,
+  ShoppingCart,
+  TrendingUp,
+  UserPlus,
+  AlertTriangle,
+  ToggleLeft,
+  ToggleRight,
+  History,
+  ShieldCheck,
+  Ban
 } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { DataTable } from '../../components/table/DataTable';
@@ -49,8 +60,10 @@ import {
   sendMessage,
   executeBirthdayAutomation,
   getBirthdaySettings,
-  saveBirthdaySettings
+  saveBirthdaySettings,
+  getMessageLogs
 } from '../../firebase/communicationService';
+import { exportDataToCsv } from '../../firebase/reportService';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -60,7 +73,10 @@ export const CustomersPage = () => {
   const [allOrders, setAllOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'vip' | 'birthday' | 'frequent' | 'blocked'
+  
+  // Behaviour Tabs: 'ALL' | 'top100' | 'frequent' | 'dormant' | 'new' | 'abandoned_cart' | 'high_cancel' | 'birthday' | 'blocked'
+  const [activeTab, setActiveTab] = useState('ALL');
+  const [categoryFilter, setCategoryFilter] = useState('ALL');
 
   // Profile Detail Modal State
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -81,17 +97,19 @@ export const CustomersPage = () => {
 
   // Direct Communication Modal
   const [messageModalOpen, setMessageModalOpen] = useState(false);
-  const [messageChannel, setMessageChannel] = useState('whatsapp');
+  const [messageChannel, setMessageChannel] = useState('whatsapp'); // 'whatsapp' | 'sms' | 'push' | 'email'
   const [customMessageText, setCustomMessageText] = useState('');
 
   // High-Risk Block Confirmation
   const [blockConfirmOpen, setBlockConfirmOpen] = useState(false);
   const [targetBlockCustomer, setTargetBlockCustomer] = useState(null);
 
-  // Birthday Automation Drawer
+  // Birthday Automation Control Panel Modal
   const [birthdayDrawerOpen, setBirthdayDrawerOpen] = useState(false);
+  const [birthdayTab, setBirthdayTab] = useState('celebrations'); // 'celebrations' | 'settings' | 'history'
   const [birthdayData, setBirthdayData] = useState({ todayList: [], thisWeekList: [], thisMonthList: [] });
   const [birthdayConfig, setBirthdayConfig] = useState(getBirthdaySettings());
+  const [messageHistory, setMessageHistory] = useState([]);
 
   const notify = useNotification();
   const { currentUser } = usePermissions();
@@ -102,9 +120,11 @@ export const CustomersPage = () => {
       const custData = await getAllCustomers();
       const orderData = await getAllOrders();
       const bData = await getBirthdayCustomers();
+      const logs = getMessageLogs();
       setCustomers(custData);
       setAllOrders(orderData);
       setBirthdayData(bData);
+      setMessageHistory(logs);
     } catch (err) {
       notify.error('Failed to load CRM data', err.message);
     } finally {
@@ -116,25 +136,75 @@ export const CustomersPage = () => {
     loadData();
   }, []);
 
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  // Filtered & Segmented Customers List
   const filteredCustomers = customers.filter((cust) => {
+    // Category Buyer Filter
+    if (categoryFilter !== 'ALL') {
+      const preferredCat = cust.preferredCategory || 'Rice & Grains';
+      if (preferredCat !== categoryFilter) return false;
+    }
+
+    // Behavioural Segmentation Tabs
     if (activeTab === 'vip' && cust.status !== 'VIP') return false;
-    if (activeTab === 'blocked' && cust.status !== 'Blocked') return false;
+    if (activeTab === 'blocked' && cust.status !== 'Blocked' && cust.status !== 'Suspicious') return false;
     if (activeTab === 'frequent' && (cust.totalOrders || 0) < 10) return false;
+    if (activeTab === 'high_cancel' && (cust.cancelledOrders || 0) < 2) return false;
+    if (activeTab === 'abandoned_cart' && !cust.hasAbandonedCart && cust.cancelledOrders < 1) return false;
+    
+    if (activeTab === 'dormant') {
+      if (!cust.lastOrderDate) return false;
+      const lastOrder = new Date(cust.lastOrderDate);
+      if (lastOrder >= thirtyDaysAgo) return false;
+    }
+
+    if (activeTab === 'new') {
+      if (!cust.registrationDate) return false;
+      const reg = new Date(cust.registrationDate);
+      if (reg < thirtyDaysAgo) return false;
+    }
+
     if (activeTab === 'birthday') {
       const isBday = birthdayData.thisMonthList.some((b) => b.id === cust.id);
       if (!isBday) return false;
     }
 
-    if (!searchTerm.trim()) return true;
-    const q = searchTerm.toLowerCase();
-    return (
-      cust.name.toLowerCase().includes(q) ||
-      cust.tamilName?.toLowerCase().includes(q) ||
-      cust.mobile.includes(q) ||
-      cust.email?.toLowerCase().includes(q) ||
-      cust.addresses?.[0]?.locality?.toLowerCase().includes(q)
-    );
+    // Search bar matching: Customer ID, Name, Mobile, Email, Locality, Order ID
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase();
+      
+      const matchesProfile =
+        cust.id?.toLowerCase().includes(q) ||
+        cust.name?.toLowerCase().includes(q) ||
+        cust.tamilName?.toLowerCase().includes(q) ||
+        cust.mobile?.includes(q) ||
+        cust.email?.toLowerCase().includes(q) ||
+        cust.addresses?.[0]?.locality?.toLowerCase().includes(q);
+
+      if (matchesProfile) return true;
+
+      // Check if q matches any Order ID placed by this customer
+      const matchesOrderId = allOrders.some(
+        (ord) =>
+          (ord.customerId === cust.id || ord.customerMobile === cust.mobile) &&
+          ord.id?.toLowerCase().includes(q)
+      );
+
+      return matchesOrderId;
+    }
+
+    return true;
+  }).sort((a, b) => {
+    if (activeTab === 'top100') {
+      return (b.totalSpending || 0) - (a.totalSpending || 0);
+    }
+    return 0;
   });
+
+  // Limit top 100 purchase value if tab selected
+  const displayedCustomers = activeTab === 'top100' ? filteredCustomers.slice(0, 100) : filteredCustomers;
 
   const handleOpenCustomerDetail = async (cust) => {
     setSelectedCustomer(cust);
@@ -239,10 +309,11 @@ export const CustomersPage = () => {
       });
 
       notify.success(
-        'Message Dispatched',
-        `Dispatched via ${messageChannel.toUpperCase()} to ${selectedCustomer.mobile}.`
+        'Notification Dispatched',
+        `Dispatched via ${messageChannel.toUpperCase()} to ${selectedCustomer.name} (${selectedCustomer.mobile}).`
       );
       setMessageModalOpen(false);
+      await loadData();
     } catch (err) {
       notify.error('Delivery Blocked', err.message);
     }
@@ -253,34 +324,89 @@ export const CustomersPage = () => {
       const res = await executeBirthdayAutomation(customer, currentUser);
       notify.success(
         'Birthday Gift Dispatched',
-        `Credited +${res.rewardCoins} Smart Coins and dispatched WhatsApp greeting to ${customer.name}!`
+        `Credited +${res.rewardCoins} Smart Coins and dispatched greeting to ${customer.name}!`
       );
       await loadData();
     } catch (err) {
-      notify.error('Automation Failed', err.message);
+      notify.error('Automation Blocked', err.message);
     }
+  };
+
+  const handleSaveBirthdaySettingsUpdate = (newConfig) => {
+    setBirthdayConfig(newConfig);
+    saveBirthdaySettings(newConfig);
+    notify.success('Birthday Settings Updated', 'Birthday automation parameters updated successfully.');
+  };
+
+  // Export Filtered Customer Data to Excel / CSV
+  const handleExportFilteredCustomers = () => {
+    const headers = [
+      { label: 'Customer ID', key: 'id' },
+      { label: 'Customer Name', key: 'name' },
+      { label: 'Tamil Name', key: 'tamilName' },
+      { label: 'Mobile Number', key: 'mobile' },
+      { label: 'Email', key: 'email' },
+      { label: 'Gender', key: 'gender' },
+      { label: 'Date of Birth', key: 'dob' },
+      { label: 'Registration Date', key: 'registrationDate' },
+      { label: 'Status', key: 'status' },
+      { label: 'Smart Coins Balance', key: 'smartCoins' },
+      { label: 'Total Spending (INR)', key: 'totalSpending' },
+      { label: 'Total Orders', key: 'totalOrders' },
+      { label: 'Average Order Value (INR)', key: 'averageOrderValue' },
+      { label: 'Last Order Date', key: 'lastOrderDate' },
+      { label: 'Cancelled Orders', key: 'cancelledOrders' },
+      { label: 'Returned Orders', key: 'returnedOrders' },
+      { label: 'Promo Codes Used', key: 'promoCodesFormatted' },
+      { label: 'Referral Code', key: 'referralCode' },
+      { label: 'Referred By', key: 'referredBy' },
+      { label: 'Support Team Notes', key: 'notes' }
+    ];
+
+    const rows = displayedCustomers.map((c) => ({
+      ...c,
+      email: c.email || 'N/A',
+      gender: c.gender || 'Unspecified',
+      dob: c.dob || 'N/A',
+      promoCodesFormatted: (c.promoCodesUsed || []).join(', ') || 'None',
+      referredBy: c.referredBy || 'Organic Direct'
+    }));
+
+    exportDataToCsv('sri_amman_filtered_crm_customers', headers, rows);
+    notify.success('Customer List Downloaded', `Exported ${rows.length} customer records to CSV/Excel format.`);
   };
 
   const columns = [
     {
       key: 'name',
-      header: 'Customer Profile & CRM Info',
+      header: 'Customer ID & Profile',
       sortable: true,
       render: (row) => (
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center shrink-0">
+          <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center shrink-0 font-mono">
             {row.name.charAt(0)}
           </div>
           <div>
-            <div className="font-bold text-slate-900">{row.name}</div>
+            <div className="font-bold text-slate-900 flex items-center gap-1.5">
+              <span>{row.name}</span>
+              <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1 rounded">
+                {row.id}
+              </span>
+            </div>
             {row.tamilName && (
               <div className="text-[11px] text-slate-500 font-sans">{row.tamilName}</div>
             )}
-            <div className="text-[10px] text-slate-400 font-mono flex items-center gap-2">
+            <div className="text-[10px] text-slate-400 font-mono flex items-center gap-2 mt-0.5">
               <span className="flex items-center gap-1">
                 <Phone className="w-3 h-3" />
                 {row.mobile}
               </span>
+              {row.email && (
+                <span className="flex items-center gap-1">
+                  <Mail className="w-3 h-3" />
+                  {row.email}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -331,7 +457,7 @@ export const CustomersPage = () => {
       sortable: true,
       render: (row) => (
         <div className="text-xs font-mono text-slate-600">
-          {row.lastOrderDate ? formatDateTime(row.lastOrderDate) : '—'}
+          {row.lastOrderDate ? formatDateTime(row.lastOrderDate) : 'No Orders'}
         </div>
       )
     },
@@ -357,7 +483,7 @@ export const CustomersPage = () => {
       align: 'center',
       render: (row) => (
         <StatusBadge
-          status={row.status === 'VIP' ? 'active' : row.status.toLowerCase()}
+          status={row.status === 'VIP' ? 'active' : row.status === 'Blocked' ? 'blocked' : 'active'}
           label={row.status}
         />
       )
@@ -371,7 +497,7 @@ export const CustomersPage = () => {
           <button
             onClick={() => handleOpenCustomerDetail(row)}
             className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition-colors"
-            title="View Full Profile & Order History"
+            title="View Complete CRM Profile & Order History"
           >
             <Eye className="w-3.5 h-3.5" />
           </button>
@@ -379,11 +505,11 @@ export const CustomersPage = () => {
           <button
             onClick={() => {
               setSelectedCustomer(row);
-              setCustomMessageText(`Vanakkam ${row.name}! Sri Amman Store has fresh farm produce in stock today.`);
+              setCustomMessageText(`Vanakkam ${row.name}! Sri Amman Store has fresh grocery offers for you today.`);
               setMessageModalOpen(true);
             }}
             className="p-1.5 text-slate-600 hover:text-blue-700 hover:bg-slate-100 rounded-lg transition-colors"
-            title="Send WhatsApp or SMS"
+            title="Send WhatsApp / SMS / Email / Push Notification"
           >
             <MessageCircle className="w-3.5 h-3.5" />
           </button>
@@ -413,11 +539,22 @@ export const CustomersPage = () => {
     <div className="space-y-6">
       <PageHeader
         title="Customer Relationship Management (CRM)"
-        subtitle="360° customer profile history, last order dates, cancellation/return audits, promo codes, referral tracking, and support notes."
+        subtitle="360° customer profiles, order history, behavioural segmentation, Smart Coins loyalty, WhatsApp/Push notices & Excel exports."
         actions={
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setBirthdayDrawerOpen(true)}
+              onClick={handleExportFilteredCustomers}
+              className="btn-primary text-xs flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Customer List (Excel/CSV)</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setBirthdayTab('celebrations');
+                setBirthdayDrawerOpen(true);
+              }}
               className="btn-secondary text-xs flex items-center gap-1.5"
             >
               <Cake className="w-3.5 h-3.5 text-rose-500" />
@@ -429,50 +566,74 @@ export const CustomersPage = () => {
         }
       />
 
-      {/* Filter and Segmentation Pills */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-subtle space-y-3">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="relative w-full sm:w-96">
+      {/* Behavioural Segmentation & Filters Bar */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-subtle space-y-3">
+        <div className="flex flex-col lg:flex-row items-center justify-between gap-3">
+          {/* Universal Search Bar */}
+          <div className="relative w-full lg:w-96">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search customer name, mobile, email, locality..."
+              placeholder="Search by Mobile, Customer Name, Customer ID, Email, Order ID..."
               className="input-text pl-9 text-xs"
             />
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto text-xs w-full sm:w-auto">
-            {[
-              { id: 'ALL', label: 'All Customers' },
-              { id: 'vip', label: 'VIP Shoppers' },
-              { id: 'frequent', label: 'Frequent (10+ Orders)' },
-              { id: 'birthday', label: 'Birthday This Month' },
-              { id: 'blocked', label: 'Blocked / Suspicious' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-emerald-800 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          {/* Category Preferred Filter */}
+          <div className="flex items-center gap-2 w-full lg:w-auto">
+            <span className="text-xs text-slate-500 font-semibold whitespace-nowrap">Preferred Category:</span>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="input-text text-xs py-1.5 px-2 bg-slate-50 border-slate-300 rounded-lg max-w-[200px]"
+            >
+              <option value="ALL">All Categories</option>
+              <option value="Rice & Grains">Rice & Grains</option>
+              <option value="Edible Oils & Ghee">Edible Oils & Ghee</option>
+              <option value="Spices & Masala">Spices & Masala</option>
+              <option value="Dairy & Milk">Dairy & Milk</option>
+              <option value="Atta & Flours">Atta & Flours</option>
+            </select>
           </div>
+        </div>
+
+        {/* Customer Behaviour Segment Tabs */}
+        <div className="flex items-center gap-1.5 overflow-x-auto text-xs pt-1 border-t border-slate-100">
+          {[
+            { id: 'ALL', label: 'All Customers' },
+            { id: 'top100', label: '🏆 Top 100 Purchase Value' },
+            { id: 'frequent', label: '⚡ Most Frequent (10+ Orders)' },
+            { id: 'dormant', label: '💤 Dormant (>30 Days No Order)' },
+            { id: 'new', label: '✨ New Customers (<30 Days)' },
+            { id: 'abandoned_cart', label: '🛒 Abandoned Carts' },
+            { id: 'high_cancel', label: '⚠️ High Cancellation Rate' },
+            { id: 'birthday', label: '🎂 Birthday Celebrations' },
+            { id: 'vip', label: '👑 VIP Shoppers' },
+            { id: 'blocked', label: '⛔ Blocked / Suspicious' }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-1.5 rounded-lg font-bold whitespace-nowrap transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-emerald-800 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Customers Table */}
       <DataTable
         columns={columns}
-        data={filteredCustomers}
+        data={displayedCustomers}
         loading={loading}
-        emptyTitle="No customer profiles match your criteria"
+        emptyTitle="No customer profiles match your search criteria"
         exportFilename="sriammanstore-crm-customers.csv"
       />
 
@@ -490,7 +651,7 @@ export const CustomersPage = () => {
             {/* Modal Internal Navigation Tabs */}
             <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
               {[
-                { id: 'crm', label: '1. CRM Metrics & Notes', icon: FileText },
+                { id: 'crm', label: '1. Profile & CRM Data', icon: FileText },
                 { id: 'orders', label: `2. Order History (${customerOrders.length})`, icon: ShoppingBag },
                 { id: 'coins', label: '3. Smart Coins Wallet', icon: Coins },
                 { id: 'addresses', label: '4. Address Book', icon: MapPin }
@@ -513,9 +674,32 @@ export const CustomersPage = () => {
               })}
             </div>
 
-            {/* TAB 1: CRM METRICS & SUPPORT NOTES */}
+            {/* TAB 1: PROFILE METRICS, CRM DATA & SUPPORT NOTES */}
             {modalActiveTab === 'crm' && (
               <div className="space-y-4">
+                {/* Basic Customer Profile Info Bar */}
+                <div className="p-3 bg-slate-100/80 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">Customer ID</span>
+                    <strong className="text-slate-900">{selectedCustomer.id}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">Mobile & Email</span>
+                    <strong className="text-slate-900">{selectedCustomer.mobile}</strong>
+                    <span className="text-[10px] text-slate-500 block truncate">{selectedCustomer.email || 'No Email'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">Gender & DOB</span>
+                    <strong className="text-slate-900">{selectedCustomer.gender || 'Not Specified'}</strong>
+                    <span className="text-[10px] text-slate-500 block">{selectedCustomer.dob || 'DOB N/A'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">Registration & Status</span>
+                    <strong className="text-emerald-800">{selectedCustomer.registrationDate}</strong>
+                    <span className="text-[10px] font-bold uppercase text-slate-700 block">{selectedCustomer.status}</span>
+                  </div>
+                </div>
+
                 {/* 4 CRM Metric Cards */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
@@ -634,7 +818,7 @@ export const CustomersPage = () => {
               </div>
             )}
 
-            {/* TAB 2: ORDER HISTORY LIST */}
+            {/* TAB 2: COMPLETE ORDER HISTORY LIST */}
             {modalActiveTab === 'orders' && (
               <div className="space-y-3">
                 <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
@@ -792,47 +976,47 @@ export const CustomersPage = () => {
         </form>
       </FormModal>
 
-      {/* Customer Communication Modal */}
+      {/* Customer Communication Modal (WhatsApp, SMS, Email, Push Alert) */}
       <FormModal
         isOpen={messageModalOpen}
         onClose={() => setMessageModalOpen(false)}
-        title="Direct Customer Communication"
-        subtitle={`Dispatch transactional notice to ${selectedCustomer?.name} (${selectedCustomer?.mobile})`}
+        title="Direct Customer Notification"
+        subtitle={`Dispatch notice to ${selectedCustomer?.name} (${selectedCustomer?.mobile})`}
         maxWidth="max-w-md"
         onSubmit={handleSendMessageSubmit}
-        submitLabel="Dispatch Message"
+        submitLabel="Dispatch Notification"
       >
         <form onSubmit={handleSendMessageSubmit} className="space-y-4 text-xs">
           <div>
             <label className="input-label">Communication Channel</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setMessageChannel('whatsapp')}
-                className={`p-2.5 rounded-xl border text-center font-semibold transition-all ${
-                  messageChannel === 'whatsapp'
-                    ? 'bg-emerald-800 text-white border-emerald-800'
-                    : 'bg-white border-slate-200 text-slate-700'
-                }`}
-              >
-                WhatsApp (Consented)
-              </button>
-              <button
-                type="button"
-                onClick={() => setMessageChannel('sms')}
-                className={`p-2.5 rounded-xl border text-center font-semibold transition-all ${
-                  messageChannel === 'sms'
-                    ? 'bg-emerald-800 text-white border-emerald-800'
-                    : 'bg-white border-slate-200 text-slate-700'
-                }`}
-              >
-                Direct SMS
-              </button>
+            <div className="grid grid-cols-4 gap-1.5">
+              {[
+                { id: 'whatsapp', label: 'WhatsApp' },
+                { id: 'sms', label: 'SMS' },
+                { id: 'email', label: 'Email' },
+                { id: 'push', label: 'Push' }
+              ].map((ch) => (
+                <button
+                  key={ch.id}
+                  type="button"
+                  onClick={() => setMessageChannel(ch.id)}
+                  className={`p-2 rounded-lg border text-center font-semibold text-xs transition-all ${
+                    messageChannel === ch.id
+                      ? 'bg-emerald-800 text-white border-emerald-800 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {ch.label}
+                </button>
+              ))}
             </div>
+            <p className="text-[10px] text-slate-400 mt-1">
+              System checks customer consent ({selectedCustomer?.consentWhatsApp ? 'WhatsApp OK' : 'No WA'}, {selectedCustomer?.consentSMS ? 'SMS OK' : 'No SMS'}) before delivery.
+            </p>
           </div>
 
           <div>
-            <label className="input-label">Message Body</label>
+            <label className="input-label">Notification Message Body</label>
             <textarea
               rows={3}
               required
@@ -844,71 +1028,257 @@ export const CustomersPage = () => {
         </form>
       </FormModal>
 
-      {/* Birthday Automation Drawer */}
+      {/* Automatic Birthday Automation & Control Panel Modal */}
       <FormModal
         isOpen={birthdayDrawerOpen}
         onClose={() => setBirthdayDrawerOpen(false)}
-        title="Birthday Automation & Loyalty Engine"
-        subtitle="Automatic rewards and personalized greetings for shoppers celebrating birthdays."
-        maxWidth="max-w-lg"
+        title="Automatic Birthday Automation & Loyalty Engine"
+        subtitle="Configure automatic birthday rewards, channel rules, message templates & audit message logs."
+        maxWidth="max-w-2xl"
         showFooter={false}
       >
         <div className="space-y-4 text-xs">
-          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
-            <span className="font-bold text-rose-900 block">
-              🎂 Today's Birthday Celebrations ({birthdayData.todayList.length})
-            </span>
-            <div className="divide-y divide-rose-200/60 pt-1">
-              {birthdayData.todayList.map((b) => (
-                <div key={b.id} className="py-2 flex items-center justify-between">
-                  <div>
-                    <strong className="text-slate-900">{b.name}</strong>
-                    <span className="text-[10px] text-slate-500 block font-mono">{b.mobile}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleExecuteBirthdayGift(b)}
-                    className="btn-primary text-xs py-1 px-2.5"
-                  >
-                    Send 50 Coins & Greeting
-                  </button>
-                </div>
-              ))}
-            </div>
+          {/* Modal Internal Tabs */}
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+            {[
+              { id: 'celebrations', label: `🎂 Today's Birthdays (${birthdayData.todayList.length})`, icon: Cake },
+              { id: 'settings', label: '⚙️ Rules & Message Template', icon: BellRing },
+              { id: 'history', label: `📜 Sent Message Audit Logs (${messageHistory.length})`, icon: History }
+            ].map((bTab) => {
+              const Icon = bTab.icon;
+              return (
+                <button
+                  key={bTab.id}
+                  onClick={() => setBirthdayTab(bTab.id)}
+                  className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 text-xs whitespace-nowrap transition-colors ${
+                    birthdayTab === bTab.id
+                      ? 'bg-emerald-800 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{bTab.label}</span>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Birthday Settings */}
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-            <span className="input-label mb-0">Birthday Reward Parameters</span>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <span className="text-[10px] text-slate-400 block">Reward Smart Coins</span>
-                <input
-                  type="number"
-                  value={birthdayConfig.rewardCoins}
-                  onChange={(e) => {
-                    const updated = { ...birthdayConfig, rewardCoins: Number(e.target.value) };
-                    setBirthdayConfig(updated);
-                    saveBirthdaySettings(updated);
-                  }}
-                  className="input-text text-xs font-mono py-1"
-                />
+          {/* TAB 1: TODAY'S CELEBRATIONS */}
+          {birthdayTab === 'celebrations' && (
+            <div className="space-y-3">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-rose-900 block text-xs">
+                    🎂 Today's Birthday Celebrations ({birthdayData.todayList.length})
+                  </span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                    birthdayConfig.isEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {birthdayConfig.isEnabled ? 'Automatic Engine Active' : 'Engine Disabled'}
+                  </span>
+                </div>
+
+                {birthdayData.todayList.length === 0 ? (
+                  <p className="text-rose-700 italic text-xs py-2">No shoppers celebrating birthdays today. ({birthdayData.thisMonthList.length} birthdays coming up this month).</p>
+                ) : (
+                  <div className="divide-y divide-rose-200/60 pt-1">
+                    {birthdayData.todayList.map((b) => (
+                      <div key={b.id} className="py-2 flex items-center justify-between">
+                        <div>
+                          <strong className="text-slate-900">{b.name}</strong>
+                          <span className="text-[10px] text-slate-500 block font-mono">{b.mobile} • {b.email || 'No email'}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleExecuteBirthdayGift(b)}
+                          className="btn-primary text-xs py-1 px-3 bg-rose-600 hover:bg-rose-700"
+                        >
+                          Send {birthdayConfig.rewardCoins} Coins & Wish
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div>
-                <span className="text-[10px] text-slate-400 block">Gift Promo Code</span>
-                <input
-                  type="text"
-                  value={birthdayConfig.promoCode}
-                  onChange={(e) => {
-                    const updated = { ...birthdayConfig, promoCode: e.target.value };
-                    setBirthdayConfig(updated);
-                    saveBirthdaySettings(updated);
-                  }}
-                  className="input-text text-xs font-mono uppercase py-1"
-                />
+
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <span className="font-bold text-slate-700 block mb-1">Upcoming Birthdays This Month ({birthdayData.thisMonthList.length}):</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {birthdayData.thisMonthList.map((mb) => (
+                    <span key={mb.id} className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-mono text-slate-700">
+                      {mb.name} ({mb.dob})
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          )}
+
+          {/* TAB 2: RULES, CHANNELS & MESSAGE TEMPLATES */}
+          {birthdayTab === 'settings' && (
+            <div className="space-y-4">
+              {/* Master Switch */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <strong className="text-slate-900 block">Automatic Birthday Engine Status</strong>
+                  <span className="text-[10px] text-slate-500">Automatically dispatches greetings & rewards on customer DOB at 08:00 AM</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = { ...birthdayConfig, isEnabled: !birthdayConfig.isEnabled };
+                    handleSaveBirthdaySettingsUpdate(updated);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors ${
+                    birthdayConfig.isEnabled
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-slate-300 text-slate-700'
+                  }`}
+                >
+                  {birthdayConfig.isEnabled ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                  <span>{birthdayConfig.isEnabled ? 'ENABLED' : 'DISABLED'}</span>
+                </button>
+              </div>
+
+              {/* Active Channels */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <span className="input-label mb-0">Enabled Communication Channels</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { key: 'whatsapp', label: '💬 WhatsApp' },
+                    { key: 'sms', label: '📱 SMS' },
+                    { key: 'email', label: '✉️ Email' },
+                    { key: 'push', label: '🔔 App Push' }
+                  ].map((ch) => (
+                    <button
+                      key={ch.key}
+                      type="button"
+                      onClick={() => {
+                        const updated = {
+                          ...birthdayConfig,
+                          channels: {
+                            ...birthdayConfig.channels,
+                            [ch.key]: !birthdayConfig.channels?.[ch.key]
+                          }
+                        };
+                        handleSaveBirthdaySettingsUpdate(updated);
+                      }}
+                      className={`p-2 rounded-lg border text-center font-bold text-xs transition-all ${
+                        birthdayConfig.channels?.[ch.key]
+                          ? 'bg-emerald-800 text-white border-emerald-800 shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-400'
+                      }`}
+                    >
+                      {ch.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Message Template Editor */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <span className="input-label mb-0">Custom Birthday Message Template</span>
+                <textarea
+                  rows={3}
+                  value={birthdayConfig.templateMessage}
+                  onChange={(e) => {
+                    const updated = { ...birthdayConfig, templateMessage: e.target.value };
+                    setBirthdayConfig(updated);
+                  }}
+                  className="input-text text-xs bg-white font-sans"
+                />
+                <div className="flex justify-between items-center text-[10px] text-slate-400">
+                  <span>Available Placeholders: <code className="text-emerald-800 font-bold">{'{name}'}</code>, <code className="text-emerald-800 font-bold">{'{coins}'}</code>, <code className="text-emerald-800 font-bold">{'{code}'}</code></span>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveBirthdaySettingsUpdate(birthdayConfig)}
+                    className="btn-primary text-xs py-1 px-2.5"
+                  >
+                    Save Template
+                  </button>
+                </div>
+              </div>
+
+              {/* Reward Config */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                <span className="input-label mb-0">Birthday Reward Parameters</span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Reward Smart Coins</span>
+                    <input
+                      type="number"
+                      value={birthdayConfig.rewardCoins}
+                      onChange={(e) => {
+                        const updated = { ...birthdayConfig, rewardCoins: Number(e.target.value) };
+                        handleSaveBirthdaySettingsUpdate(updated);
+                      }}
+                      className="input-text text-xs font-mono py-1"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Gift Promo Code</span>
+                    <input
+                      type="text"
+                      value={birthdayConfig.promoCode}
+                      onChange={(e) => {
+                        const updated = { ...birthdayConfig, promoCode: e.target.value };
+                        handleSaveBirthdaySettingsUpdate(updated);
+                      }}
+                      className="input-text text-xs font-mono uppercase py-1"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: SENT MESSAGE HISTORY & DELIVERY AUDIT LOGS */}
+          {birthdayTab === 'history' && (
+            <div className="space-y-3">
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                  <span>Delivery & Consent Audit Log</span>
+                </div>
+                <span className="text-slate-500 font-mono text-[11px]">{messageHistory.length} Logged Entries</span>
+              </div>
+
+              <div className="divide-y divide-slate-200/80 border border-slate-200 rounded-xl max-h-72 overflow-y-auto bg-white">
+                {messageHistory.length === 0 ? (
+                  <div className="p-4 text-center text-slate-400 italic">No message logs recorded yet.</div>
+                ) : (
+                  messageHistory.map((log) => (
+                    <div key={log.id} className="p-3 text-xs space-y-1 hover:bg-slate-50 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <strong className="text-slate-900 font-bold">{log.customerName}</strong>
+                          <span className="text-[10px] font-mono text-slate-400">({log.customerPhone})</span>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                            log.status.includes('Consent Blocked')
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}
+                        >
+                          {log.status}
+                        </span>
+                      </div>
+
+                      <div className="text-[11px] text-slate-600 font-mono bg-slate-50 p-1.5 rounded border border-slate-100">
+                        "{log.message}"
+                      </div>
+
+                      <div className="flex justify-between text-[10px] text-slate-400 font-mono pt-0.5">
+                        <span>Channel: <strong className="uppercase text-slate-700">{log.channel}</strong></span>
+                        <span>{formatDateTime(log.timestamp)} • {log.sentBy}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </FormModal>
 

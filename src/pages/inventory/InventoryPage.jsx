@@ -129,6 +129,29 @@ export const InventoryPage = () => {
 
   // Export Inventory Excel / CSV Report
   const handleExportExcel = () => {
+    if (activeTab === 'movements') {
+      const headers = [
+        { label: 'Date and Time', key: 'createdAtFormatted' },
+        { label: 'Product Name', key: 'productName' },
+        { label: 'Variant Name', key: 'variantName' },
+        { label: 'SKU Code', key: 'sku' },
+        { label: 'Adjustment Type', key: 'movementType' },
+        { label: 'Previous Quantity', key: 'previousQuantity' },
+        { label: 'Stock Delta (+/-)', key: 'changedQuantity' },
+        { label: 'New Quantity', key: 'newQuantity' },
+        { label: 'Audit Reason', key: 'reason' },
+        { label: 'Staff Member Name', key: 'userName' },
+        { label: 'Supplier Record', key: 'supplierName' }
+      ];
+      const rows = filteredMovements.map((m) => ({
+        ...m,
+        createdAtFormatted: formatDateTime(m.createdAt)
+      }));
+      exportDataToCsv('sri_amman_stock_movement_audit_ledger', headers, rows);
+      notify.success('Audit Report Downloaded', 'Complete stock movement audit log exported successfully.');
+      return;
+    }
+
     if (!metrics?.flattenedVariants) return;
     const headers = [
       { label: 'Product Name', key: 'productName' },
@@ -362,6 +385,12 @@ export const InventoryPage = () => {
           {row.supplierName || 'Wholesale Supplier'}
         </span>
       )
+    },
+    {
+      key: 'previousQuantity',
+      header: 'Previous SOH',
+      align: 'center',
+      render: (row) => <span className="font-mono text-xs text-slate-500">{row.previousQuantity}</span>
     },
     {
       key: 'change',

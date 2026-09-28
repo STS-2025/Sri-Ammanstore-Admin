@@ -50,8 +50,20 @@ export const DataTable = ({
     });
   }, [data, internalSortColumn, internalSortDir]);
 
-  const allSelected = data.length > 0 && selectedRows.length === data.length;
-  const isIndeterminate = selectedRows.length > 0 && selectedRows.length < data.length;
+  const getRowId = (row, index) => {
+    if (!row) return index;
+    return row.id ?? row.orderNumber ?? row.sku ?? row.code ?? index;
+  };
+
+  const allSelected = useMemo(() => {
+    if (!selectable || data.length === 0) return false;
+    return data.every((row, idx) => selectedRows.includes(getRowId(row, idx)));
+  }, [selectable, data, selectedRows]);
+
+  const isIndeterminate = useMemo(() => {
+    if (!selectable || data.length === 0 || allSelected) return false;
+    return data.some((row, idx) => selectedRows.includes(getRowId(row, idx)));
+  }, [selectable, data, selectedRows, allSelected]);
 
   const handleExportCSV = () => {
     if (data.length === 0) return;
@@ -89,7 +101,7 @@ export const DataTable = ({
           <div className="flex items-center gap-2">
             {bulkActions}
             <button
-              onClick={() => onSelectAll(false)}
+              onClick={() => onSelectAll && onSelectAll(false)}
               className="text-xs text-emerald-700 hover:text-emerald-800 underline font-semibold ml-2"
             >
               Deselect All
@@ -173,10 +185,11 @@ export const DataTable = ({
               </tr>
             ) : (
               sortedData.map((row, index) => {
-                const isSelected = selectedRows.includes(row.id || index);
+                const rowId = getRowId(row, index);
+                const isSelected = selectedRows.includes(rowId);
                 return (
                   <tr
-                    key={row.id || index}
+                    key={rowId}
                     onClick={() => onRowClick && onRowClick(row)}
                     className={`transition-colors hover:bg-slate-50/80 ${
                       isSelected ? 'bg-emerald-50/40' : index % 2 === 1 ? 'bg-slate-50/30' : 'bg-white'
@@ -190,7 +203,7 @@ export const DataTable = ({
                         <input
                           type="checkbox"
                           checked={isSelected}
-                          onChange={(e) => onSelectRow && onSelectRow(row.id || index, e.target.checked)}
+                          onChange={(e) => onSelectRow && onSelectRow(rowId, e.target.checked)}
                           className="w-4 h-4 rounded text-emerald-600 border-slate-300 focus:ring-emerald-500 focus:ring-offset-0 cursor-pointer"
                           aria-label={`Select row ${index + 1}`}
                         />
