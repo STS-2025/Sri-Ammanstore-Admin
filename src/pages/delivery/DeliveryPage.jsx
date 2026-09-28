@@ -16,7 +16,8 @@ import {
   reorderBatchStops, 
   updateStopDeliveryStatus,
   reconcileAgentCodDeposit,
-  getCodReconciliationHistory
+  getCodReconciliationHistory,
+  reassignBatchRider
 } from '../../firebase/deliveryService';
 import { getAllOrders } from '../../firebase/orderService';
 import { DeliveryAgentModal } from '../../components/delivery/DeliveryAgentModal';
@@ -43,6 +44,11 @@ export const DeliveryPage = () => {
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [isCodModalOpen, setIsCodModalOpen] = useState(false);
   const [agentForCodSettlement, setAgentForCodSettlement] = useState(null);
+
+  // Reassign Rider modal state
+  const [isReassignModalOpen, setIsReassignModalOpen] = useState(false);
+  const [selectedBatchForReassign, setSelectedBatchForReassign] = useState(null);
+  const [replacementAgentId, setReplacementAgentId] = useState('');
 
   // Simulation mode for testing rider screen
   const [isSimulatingRider, setIsSimulatingRider] = useState(false);
@@ -156,6 +162,22 @@ export const DeliveryPage = () => {
       await loadData();
     } catch (err) {
       alert(`Error reconciling COD: ${err.message}`);
+    }
+  };
+
+  const handleConfirmReassign = async () => {
+    if (!selectedBatchForReassign || !replacementAgentId) {
+      alert('Please select a replacement rider.');
+      return;
+    }
+    try {
+      await reassignBatchRider(selectedBatchForReassign.id, replacementAgentId, currentUser);
+      setIsReassignModalOpen(false);
+      setSelectedBatchForReassign(null);
+      setReplacementAgentId('');
+      await loadData();
+    } catch (err) {
+      alert(`Error reassigning rider: ${err.message}`);
     }
   };
 
@@ -429,9 +451,24 @@ export const DeliveryPage = () => {
                     </p>
 
                     <div className="mt-3 bg-slate-50 p-3 rounded-xl space-y-1.5 text-xs">
-                      <div className="flex justify-between">
+                      <div className="flex justify-between items-center">
                         <span className="text-slate-500">Rider Assigned:</span>
-                        <span className="font-semibold text-slate-800">{batch.agentName}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-slate-800">{batch.agentName}</span>
+                          {batch.status !== 'completed' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedBatchForReassign(batch);
+                                setReplacementAgentId(batch.agentId || '');
+                                setIsReassignModalOpen(true);
+                              }}
+                              className="px-2 py-0.5 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-md transition-colors"
+                            >
+                              Reassign
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-slate-500">Stops / Orders:</span>
@@ -734,6 +771,69 @@ export const DeliveryPage = () => {
         onReconcile={handleReconcileCod}
         agent={agentForCodSettlement}
       />
+
+      {/* Reassign Fleet Rider Modal */}
+      {isReassignModalOpen && selectedBatchForReassign && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Reassign Dispatch Batch</h3>
+                <p className="text-xs text-slate-500 font-mono">{selectedBatchForReassign.batchNumber}</p>
+              </div>
+              <button 
+                onClick={() => setIsReassignModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-900 space-y-1">
+              <p className="font-bold">Current Rider: {selectedBatchForReassign.agentName}</p>
+              <p className="text-[11px] text-indigo-700">
+                Total Orders: {selectedBatchForReassign.totalOrders} • Locality: {selectedBatchForReassign.clusterLocality}
+              </p>
+            </div>
+
+            <div>
+              <label className="input-label" htmlFor="replacement-rider-select">
+                Select Replacement Fleet Rider *
+              </label>
+              <select
+                id="replacement-rider-select"
+                value={replacementAgentId}
+                onChange={(e) => setReplacementAgentId(e.target.value)}
+                className="input-text text-xs font-semibold text-slate-800 bg-slate-50 border-slate-300 focus:bg-white"
+              >
+                <option value="">-- Choose active fleet rider --</option>
+                {agents.map(a => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.vehicleNumber || 'Bike'}) — {a.status === 'on_delivery' ? 'On Delivery' : 'Available at Hub'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsReassignModalOpen(false)}
+                className="btn-secondary text-xs px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReassign}
+                className="btn-primary text-xs px-4 py-2"
+              >
+                Confirm Reassignment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

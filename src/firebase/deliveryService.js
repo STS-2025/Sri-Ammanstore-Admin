@@ -586,3 +586,92 @@ export const getCodReconciliationHistory = () => {
     return [];
   }
 };
+
+/**
+ * Reassign an active delivery batch to a different fleet rider
+ */
+export const reassignBatchRider = async (batchId, newAgentId, user) => {
+  const batches = getStoredBatches();
+  const batchIndex = batches.findIndex(b => b.id === batchId);
+  if (batchIndex === -1) throw new Error('Batch not found');
+
+  const oldBatch = batches[batchIndex];
+  const oldAgentId = oldBatch.agentId;
+
+  const agents = getStoredAgents();
+  const newAgent = agents.find(a => a.id === newAgentId || a.uid === newAgentId);
+  if (!newAgent) throw new Error('Selected replacement rider not found');
+
+  // 1. Update batch with new rider details
+  oldBatch.agentId = newAgent.id;
+  oldBatch.agentName = newAgent.name;
+  oldBatch.agentEmail = newAgent.email || '';
+  saveStoredBatches(batches);
+
+  // 2. Revert old rider status if no other active batches assigned
+  if (oldAgentId) {
+    const hasOtherActiveBatches = batches.some(b => b.id !== batchId && b.agentId === oldAgentId && b.status !== 'completed');
+    if (!hasOtherActiveBatches) {
+      const oldAgIndex = agents.findIndex(a => a.id === oldAgentId);
+      if (oldAgIndex !== -1) {
+        agents[oldAgIndex].status = 'available';
+        agents[oldAgIndex].currentBatchId = null;
+      }
+    }
+  }
+
+  // 3. Update new rider status to on_delivery
+  const newAgIndex = agents.findIndex(a => a.id === newAgent.id);
+  if (newAgIndex !== -1) {
+    agents[newAgIndex].status = 'on_delivery';
+    agents[newAgIndex].currentBatchId = batchId;
+  }
+  saveStoredAgents(agents);
+
+  // 4. Update order storage so orders reflect new rider details
+  try {
+    const rawOrders = localStorage.getItem('grocery_admin_orders_v3');
+    if (rawOrders) {
+      const ordersList = JSON.parse(rawOrders);
+      let updated = false;
+      const targetIds = new Set((oldBatch.stops || []).map(s => s.orderId));
+      ordersList.forEach(o => {
+        if (targetIds.has(o.id) || targetIds.has(o.orderNumber)) {
+          o.deliveryAgentId = newAgent.id;
+          o.deliveryAgentName = newAgent.name;
+          updated = true;
+        }
+      });
+      if (updated) {
+        localStorage.setItem('grocery_admin_orders_v3', JSON.stringify(ordersList));
+      }
+    }
+  } catch (e) {
+    console.error('Error updating orders on rider reassign:', e);
+  }
+
+  // 5. Firestore update if configured
+  if (isFirebaseConfigured) {
+    try {
+      await updateDoc(doc(db, COLLECTIONS.DELIVERY_BATCHES, batchId), {
+        agentId: newAgent.id,
+        agentName: newAgent.name,
+        agentEmail: newAgent.email || '',
+        updatedAt: serverTimestamp()
+      });
+    } catch (e) {
+      console.warn('Firestore batch reassign failed:', e);
+    }
+  }
+
+  await logActivity(
+    user || { id: 'admin', name: 'Delivery Manager' },
+    'delivery.batch_reassign',
+    COLLECTIONS.DELIVERY_BATCHES,
+    batchId,
+    `Reassigned delivery batch ${oldBatch.batchNumber} to rider ${newAgent.name}`,
+    { oldAgentId, newAgentId: newAgent.id }
+  );
+
+  return oldBatch;
+};
