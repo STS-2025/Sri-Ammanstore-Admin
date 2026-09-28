@@ -38,14 +38,9 @@ export const LoginPage = () => {
   const location = useLocation();
   const notify = useNotification();
 
-  // Handle Role selection change in Sign In dropdown
+  // Handle Role selection change in dropdown (updates selectedRole without overwriting entered credentials)
   const handleRoleChange = (roleKey) => {
     setSelectedRole(roleKey);
-    const demoUser = DEMO_USERS[roleKey];
-    if (demoUser) {
-      setEmail(demoUser.email);
-      setPassword('password123');
-    }
   };
 
   const handleSelectDemoUser = (user) => {
@@ -178,7 +173,7 @@ export const LoginPage = () => {
               }`}
             >
               <Shield className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Staff Sign In</span>
+              <span>Staff Login</span>
             </button>
 
             <button
@@ -194,7 +189,7 @@ export const LoginPage = () => {
               }`}
             >
               <UserPlus className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Staff Sign Up</span>
+              <span>Staff Sign In</span>
             </button>
           </div>
 
