@@ -17,6 +17,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Super Admin / Owner',
     badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     description: 'Full unconstrained platform governance, financial controls and role administration.',
+    defaultRoute: '/dashboard',
     permissions: Object.values(PERMISSIONS)
   },
   [ROLES.STORE_MANAGER]: {
@@ -24,6 +25,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Store Manager',
     badgeColor: 'bg-blue-100 text-blue-800 border-blue-300',
     description: 'Day-to-day retail operations oversight across products, stock, orders and delivery.',
+    defaultRoute: '/dashboard',
     permissions: [
       PERMISSIONS.DASHBOARD_VIEW,
       PERMISSIONS.DASHBOARD_FINANCIAL_METRICS,
@@ -56,6 +58,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Inventory Staff',
     badgeColor: 'bg-amber-100 text-amber-800 border-amber-300',
     description: 'Warehouse intake, stock count adjustments, shelf audits and expiry monitoring.',
+    defaultRoute: '/inventory',
     permissions: [
       PERMISSIONS.DASHBOARD_VIEW,
       PERMISSIONS.DASHBOARD_OPERATIONAL_METRICS,
@@ -71,6 +74,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Packing & Fulfillment Staff',
     badgeColor: 'bg-indigo-100 text-indigo-800 border-indigo-300',
     description: 'Order item picking, verification weighing, packing and shipping label generation.',
+    defaultRoute: '/orders',
     permissions: [
       PERMISSIONS.DASHBOARD_VIEW,
       PERMISSIONS.DASHBOARD_OPERATIONAL_METRICS,
@@ -85,6 +89,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Delivery Manager',
     badgeColor: 'bg-cyan-100 text-cyan-800 border-cyan-300',
     description: 'Fleet coordination, delivery route optimization and rider load balancing.',
+    defaultRoute: '/delivery',
     permissions: [
       PERMISSIONS.DASHBOARD_VIEW,
       PERMISSIONS.DASHBOARD_OPERATIONAL_METRICS,
@@ -99,6 +104,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Delivery Agent',
     badgeColor: 'bg-teal-100 text-teal-800 border-teal-300',
     description: 'Assigned order route drop-offs, customer handover, OTP verification and COD collection.',
+    defaultRoute: '/delivery',
     permissions: [
       PERMISSIONS.DELIVERY_ASSIGNED_ONLY,
       PERMISSIONS.DELIVERY_UPDATE_STATUS,
@@ -110,6 +116,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Marketing Staff',
     badgeColor: 'bg-purple-100 text-purple-800 border-purple-300',
     description: 'Promotional banners, homepage display banners, campaigns and push messaging.',
+    defaultRoute: '/marketing',
     permissions: [
       PERMISSIONS.DASHBOARD_VIEW,
       PERMISSIONS.MARKETING_VIEW,
@@ -125,6 +132,7 @@ export const ROLE_DEFINITIONS = {
     name: 'Accounts & Finance Staff',
     badgeColor: 'bg-emerald-100 text-emerald-900 border-emerald-300',
     description: 'Sales reconciliation, COD settlement audits, refund validation and financial statements.',
+    defaultRoute: '/reports',
     permissions: [
       PERMISSIONS.DASHBOARD_VIEW,
       PERMISSIONS.DASHBOARD_FINANCIAL_METRICS,

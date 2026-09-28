@@ -16,6 +16,7 @@ export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [userRole, setUserRole] = useState(ROLES.SUPER_ADMIN);
+  const [authenticatedRole, setAuthenticatedRole] = useState(ROLES.SUPER_ADMIN);
   const [permissions, setPermissions] = useState(ROLE_DEFINITIONS[ROLES.SUPER_ADMIN].permissions);
   const [loading, setLoading] = useState(true);
 
@@ -31,10 +32,11 @@ export const AuthProvider = ({ children }) => {
               setUserProfile(profile);
               const assignedRole = profile.role || ROLES.STORE_MANAGER;
               setUserRole(assignedRole);
+              setAuthenticatedRole(assignedRole);
               setPermissions(ROLE_DEFINITIONS[assignedRole]?.permissions || []);
             } else {
-              // Default fallback for new unassigned authenticated account
               setUserRole(ROLES.PACKING_STAFF);
+              setAuthenticatedRole(ROLES.PACKING_STAFF);
               setPermissions(ROLE_DEFINITIONS[ROLES.PACKING_STAFF].permissions);
             }
           } catch (err) {
@@ -43,13 +45,17 @@ export const AuthProvider = ({ children }) => {
         } else {
           // Dev / Preview demo user
           setUserProfile(firebaseUser);
-          setUserRole(firebaseUser.role);
-          setPermissions(ROLE_DEFINITIONS[firebaseUser.role]?.permissions || []);
+          const activeRole = localStorage.getItem('grocery_admin_active_role') || firebaseUser.role || ROLES.SUPER_ADMIN;
+          const realRole = firebaseUser.role || ROLES.SUPER_ADMIN;
+          setUserRole(activeRole);
+          setAuthenticatedRole(realRole);
+          setPermissions(ROLE_DEFINITIONS[activeRole]?.permissions || []);
         }
       } else {
         setCurrentUser(null);
         setUserProfile(null);
         setUserRole(null);
+        setAuthenticatedRole(null);
         setPermissions([]);
       }
       setLoading(false);
@@ -66,6 +72,7 @@ export const AuthProvider = ({ children }) => {
         setCurrentUser(user);
         setUserProfile(user);
         setUserRole(user.role);
+        setAuthenticatedRole(user.role);
         setPermissions(ROLE_DEFINITIONS[user.role]?.permissions || []);
         localStorage.setItem('grocery_admin_active_role', user.role);
       }
@@ -99,29 +106,31 @@ export const AuthProvider = ({ children }) => {
       setCurrentUser(null);
       setUserProfile(null);
       setUserRole(null);
+      setAuthenticatedRole(null);
       setPermissions([]);
       localStorage.removeItem('grocery_admin_active_role');
     }
   };
 
   /**
-   * Fast Role Switcher (Crucial for development, previewing and auditing all 8 roles)
+   * Fast Role Switcher (Crucial for Super Admin testing/auditing all 8 roles)
    */
   const switchDemoRole = (newRole) => {
     if (!ROLE_DEFINITIONS[newRole]) return;
-    const demoUser = DEMO_USERS[newRole];
-    setCurrentUser(demoUser);
-    setUserProfile(demoUser);
     setUserRole(newRole);
     setPermissions(ROLE_DEFINITIONS[newRole].permissions);
     localStorage.setItem('grocery_admin_active_role', newRole);
     console.info(`[AuthContext] Switched active operational role to: ${newRole}`);
   };
 
+  const isSuperAdmin = authenticatedRole === ROLES.SUPER_ADMIN;
+
   const value = {
     currentUser,
     userProfile,
     userRole,
+    authenticatedRole,
+    isSuperAdmin,
     permissions,
     loading,
     login,

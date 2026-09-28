@@ -20,7 +20,7 @@ import { ROLE_DEFINITIONS, ROLES } from '../../utils/roles';
 import { useNotification } from '../../context/NotificationContext';
 
 export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeScanner }) => {
-  const { currentUser, userProfile, userRole, logout, switchDemoRole, isFirebaseConfigured } = useAuth();
+  const { currentUser, userProfile, userRole, isSuperAdmin, logout, switchDemoRole, isFirebaseConfigured } = useAuth();
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const [notificationDropdownOpen, setNotificationDropdownOpen] = useState(false);
@@ -34,6 +34,7 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
   };
 
   const isSuperAdminUser =
+    isSuperAdmin ||
     userRole === ROLES.SUPER_ADMIN ||
     currentUser?.role === ROLES.SUPER_ADMIN ||
     userProfile?.role === ROLES.SUPER_ADMIN;
@@ -64,7 +65,11 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
   const handleSwitchRole = (newRole) => {
     switchDemoRole(newRole);
     setRoleDropdownOpen(false);
-    notify.success('Role Switched', `Switched active preview role to: ${ROLE_DEFINITIONS[newRole].name}`);
+    const targetRoleDef = ROLE_DEFINITIONS[newRole];
+    notify.success('Role Switched', `Switched active preview role to: ${targetRoleDef?.name}`);
+    if (targetRoleDef?.defaultRoute) {
+      navigate(targetRoleDef.defaultRoute);
+    }
   };
 
   return (

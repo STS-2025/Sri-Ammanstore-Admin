@@ -36,11 +36,11 @@ export const UnauthorizedPage = () => {
 
         <div className="flex flex-col gap-2">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate(roleDef.defaultRoute || '/dashboard')}
             className="w-full btn-primary text-xs py-2.5 flex items-center justify-center gap-2"
           >
             <Home className="w-4 h-4" />
-            <span>Return to Main Dashboard</span>
+            <span>Return to Authorized Home</span>
           </button>
 
           <button
