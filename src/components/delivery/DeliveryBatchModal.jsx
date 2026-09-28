@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { X, Package, Truck, ArrowUpDown, ChevronUp, ChevronDown, CheckCircle, AlertTriangle, MapPin, Scale, Clock } from 'lucide-react';
 import { validateBatchCapacity } from '../../firebase/deliveryService';
 
-export const DeliveryBatchModal = ({ isOpen, onClose, onSave, availableOrders = [], agents = [] }) => {
+export const DeliveryBatchModal = ({ isOpen, onClose, onSave, availableOrders = [], agents = [], batches = [] }) => {
   const [selectedOrderIds, setSelectedOrderIds] = useState([]);
   const [assignedAgentId, setAssignedAgentId] = useState('');
   const [clusterLocality, setClusterLocality] = useState('RS Puram & Central Coimbatore');
@@ -10,10 +10,29 @@ export const DeliveryBatchModal = ({ isOpen, onClose, onSave, availableOrders = 
   const [maxWeightCapacityKg, setMaxWeightCapacityKg] = useState(50);
   const [orderedStops, setOrderedStops] = useState([]);
 
-  // Filter available orders (status 'packed' or 'confirmed')
+  // Collect all order IDs that have already been assigned to any active/existing batch
+  const alreadyAssignedOrderIds = useMemo(() => {
+    const ids = new Set();
+    (batches || []).forEach(b => {
+      (b.orderIds || []).forEach(id => ids.add(id));
+      (b.stops || []).forEach(s => ids.add(s.orderId));
+    });
+    return ids;
+  }, [batches]);
+
+  // Filter available orders (status 'packed' or 'confirmed' AND not already assigned to any batch or rider)
   const dispatchableOrders = useMemo(() => {
-    return availableOrders.filter(o => o.status === 'packed' || o.status === 'confirmed');
-  }, [availableOrders]);
+    return availableOrders.filter(o => {
+      const isPackedOrConfirmed = o.status === 'packed' || o.status === 'confirmed';
+      const isAlreadyAssigned = 
+        alreadyAssignedOrderIds.has(o.id) || 
+        alreadyAssignedOrderIds.has(o.orderNumber) ||
+        o.status === 'out_for_delivery' ||
+        o.status === 'delivered' ||
+        o.status === 'cancelled';
+      return isPackedOrConfirmed && !isAlreadyAssigned;
+    });
+  }, [availableOrders, alreadyAssignedOrderIds]);
 
   // Selected orders list
   const selectedOrders = useMemo(() => {

@@ -677,6 +677,7 @@ export const DeliveryPage = () => {
         onSave={handleCreateBatch}
         availableOrders={orders}
         agents={agents}
+        batches={batches}
       />
 
       <CodReconciliationModal

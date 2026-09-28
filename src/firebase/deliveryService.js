@@ -300,6 +300,29 @@ export const createDeliveryBatch = async (batchData, user) => {
     }
   }
 
+  // Update order status in order storage so assigned orders are marked out_for_delivery and omitted from future batch creation
+  try {
+    const rawOrders = localStorage.getItem('grocery_admin_orders_v3');
+    if (rawOrders) {
+      const ordersList = JSON.parse(rawOrders);
+      let updated = false;
+      const targetIds = new Set(newBatch.stops.map(s => s.orderId));
+      ordersList.forEach(o => {
+        if (targetIds.has(o.id) || targetIds.has(o.orderNumber)) {
+          o.status = 'out_for_delivery';
+          o.deliveryAgentId = newBatch.agentId;
+          o.deliveryAgentName = newBatch.agentName;
+          updated = true;
+        }
+      });
+      if (updated) {
+        localStorage.setItem('grocery_admin_orders_v3', JSON.stringify(ordersList));
+      }
+    }
+  } catch (e) {
+    console.error('Error updating order statuses for batch creation:', e);
+  }
+
   if (isFirebaseConfigured) {
     try {
       await setDoc(doc(db, COLLECTIONS.DELIVERY_BATCHES, newBatch.id), {
