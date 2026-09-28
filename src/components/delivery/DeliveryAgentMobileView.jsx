@@ -304,10 +304,18 @@ export const DeliveryAgentMobileView = ({
           </div>
         </div>
       ) : (
-        <div className="p-8 text-center bg-white m-4 rounded-2xl border border-slate-200">
-          <Truck className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-          <h3 className="text-base font-bold text-slate-800">No Batches Assigned</h3>
-          <p className="text-xs text-slate-500 mt-1">You are currently available at the hub. The dispatch manager will assign your next grocery route shortly.</p>
+        <div className="p-8 text-center bg-white m-4 rounded-3xl border border-slate-200 shadow-sm py-12">
+          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4 border border-amber-200 shadow-xs">
+            <Truck className="w-8 h-8" />
+          </div>
+          <h3 className="text-lg font-extrabold text-slate-900">No Order Assigned</h3>
+          <p className="text-xs text-slate-500 max-w-xs mx-auto mt-2 leading-relaxed">
+            No active delivery batch or customer orders assigned to your profile yet. Once the Delivery Manager assigns orders to you, all route and customer details will appear here.
+          </p>
+          <div className="mt-5 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Status: Available for Assignment</span>
+          </div>
         </div>
       )}
 

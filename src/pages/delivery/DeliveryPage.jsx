@@ -166,7 +166,7 @@ export const DeliveryPage = () => {
       ? (agents.find(a => a.id === currentUser?.id) || agents[0])
       : agents.find(a => a.id === simulatedAgentId) || agents[0];
 
-    const riderBatch = batches.find(b => b.agentId === activeAgent?.id && b.status !== 'completed') || batches[0];
+    const riderBatch = batches.find(b => b.agentId === activeAgent?.id && b.status !== 'completed');
 
     return (
       <div className="py-4">
