@@ -20,17 +20,21 @@ export const DeliveryBatchModal = ({ isOpen, onClose, onSave, availableOrders = 
     return ids;
   }, [batches]);
 
-  // Filter available orders (status 'packed' or 'confirmed' AND not already assigned to any batch or rider)
+  // Filter available orders (status 'packed', 'confirmed', 'ready', or 'picking' AND not already assigned to any batch or rider)
   const dispatchableOrders = useMemo(() => {
     return availableOrders.filter(o => {
-      const isPackedOrConfirmed = o.status === 'packed' || o.status === 'confirmed';
+      const isDispatchableStatus = 
+        o.status === 'packed' || 
+        o.status === 'confirmed' || 
+        o.status === 'ready' || 
+        o.status === 'picking';
       const isAlreadyAssigned = 
         alreadyAssignedOrderIds.has(o.id) || 
         alreadyAssignedOrderIds.has(o.orderNumber) ||
         o.status === 'out_for_delivery' ||
         o.status === 'delivered' ||
         o.status === 'cancelled';
-      return isPackedOrConfirmed && !isAlreadyAssigned;
+      return isDispatchableStatus && !isAlreadyAssigned;
     });
   }, [availableOrders, alreadyAssignedOrderIds]);
 

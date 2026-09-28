@@ -284,7 +284,10 @@ export const DeliveryPage = () => {
 
           <button
             type="button"
-            onClick={() => setIsBatchModalOpen(true)}
+            onClick={async () => {
+              await loadData();
+              setIsBatchModalOpen(true);
+            }}
             className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
           >
             <Package className="w-4 h-4" />

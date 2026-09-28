@@ -176,12 +176,13 @@ export const updateItemPickStatus = async (orderId, itemId, newPickStatus, user)
 
   item.pickStatus = newPickStatus; // 'pending' | 'picked' | 'packed' | 'unavailable' | 'replaced'
 
-  // If all items are packed, advance order status to 'packed'
-  const allPacked = order.items.every((i) => i.pickStatus === 'packed' || i.pickStatus === 'replaced');
-  if (allPacked && order.status === 'picking') {
+  // If all items are packed, advance order status to 'packed' regardless of prior stage
+  const allPacked = (order.items || []).every((i) => i.pickStatus === 'packed' || i.pickStatus === 'replaced');
+  if (allPacked && order.status !== 'packed' && order.status !== 'out_for_delivery' && order.status !== 'delivered' && order.status !== 'cancelled') {
     order.status = 'packed';
     order.packedAt = new Date().toISOString();
     order.packedBy = user?.displayName || 'Packing Staff';
+    order.timeline = order.timeline || [];
     order.timeline.push({
       status: 'packed',
       label: 'All Items Picked & Verified',
