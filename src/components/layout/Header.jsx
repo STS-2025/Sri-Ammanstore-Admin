@@ -33,6 +33,11 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
     badgeColor: 'bg-slate-100 text-slate-800'
   };
 
+  const isSuperAdminUser =
+    userRole === ROLES.SUPER_ADMIN ||
+    currentUser?.role === ROLES.SUPER_ADMIN ||
+    userProfile?.role === ROLES.SUPER_ADMIN;
+
   // Close dropdowns on outside click
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -102,44 +107,57 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
       {/* Right: Operational Status, Role Switcher, Alerts, Profile */}
       <div className="flex items-center gap-2.5 sm:gap-4 shrink-0" ref={dropdownRef}>
 
-        {/* Role Switcher Pill (Preview / QA testing for all 8 roles) */}
+        {/* Role Indicator / Switcher Pill */}
         <div className="relative">
-          <button
-            onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${currentRoleDef.badgeColor}`}
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span className="max-w-[110px] sm:max-w-none truncate">{currentRoleDef.name}</span>
-            <ChevronDown className="w-3 h-3 opacity-70" />
-          </button>
+          {isSuperAdminUser ? (
+            <>
+              <button
+                onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${currentRoleDef.badgeColor}`}
+                title="Super Admin Role Switcher (Preview)"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span className="max-w-[110px] sm:max-w-none truncate">{currentRoleDef.name}</span>
+                <ChevronDown className="w-3 h-3 opacity-70" />
+              </button>
 
-          {roleDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-dropdown border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95">
-              <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                Simulate Role Permission
-              </div>
-              <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-                {Object.values(ROLE_DEFINITIONS).map((def) => {
-                  const isSelected = userRole === def.id;
-                  return (
-                    <button
-                      key={def.id}
-                      onClick={() => handleSwitchRole(def.id)}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors ${
-                        isSelected ? 'bg-emerald-50 font-semibold text-emerald-900' : 'text-slate-700'
-                      }`}
-                    >
-                      <div className="min-w-0 pr-2">
-                        <div className="truncate">{def.name}</div>
-                        <div className="text-[10px] text-slate-400 truncate font-normal">
-                          {def.permissions.length} capabilities
-                        </div>
-                      </div>
-                      {isSelected && <Check className="w-4 h-4 text-emerald-600 shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
+              {roleDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-dropdown border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95">
+                  <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    Simulate Role Permission
+                  </div>
+                  <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                    {Object.values(ROLE_DEFINITIONS).map((def) => {
+                      const isSelected = userRole === def.id;
+                      return (
+                        <button
+                          key={def.id}
+                          onClick={() => handleSwitchRole(def.id)}
+                          className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors ${
+                            isSelected ? 'bg-emerald-50 font-semibold text-emerald-900' : 'text-slate-700'
+                          }`}
+                        >
+                          <div className="min-w-0 pr-2">
+                            <div className="truncate">{def.name}</div>
+                            <div className="text-[10px] text-slate-400 truncate font-normal">
+                              {def.permissions.length} capabilities
+                            </div>
+                          </div>
+                          {isSelected && <Check className="w-4 h-4 text-emerald-600 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${currentRoleDef.badgeColor}`}
+              title={`Logged in as ${currentRoleDef.name}`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span className="max-w-[110px] sm:max-w-none truncate">{currentRoleDef.name}</span>
             </div>
           )}
         </div>
