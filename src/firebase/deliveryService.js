@@ -129,9 +129,25 @@ export const ensureDeliveryAgentRegistered = async (user) => {
   if (!user || user.role !== 'delivery_agent') return;
   const agents = getStoredAgents();
   const agentId = user.uid || user.id || `agent-${(user.email || 'rider').replace(/[^a-zA-Z0-9]/g, '')}`;
-  const exists = agents.some(a => a.id === agentId || (a.email && user.email && a.email.toLowerCase() === user.email.toLowerCase()));
+  const userEmail = (user.email || '').trim().toLowerCase();
 
-  if (!exists) {
+  const existingIndex = agents.findIndex(a => 
+    a.id === agentId || 
+    (a.email && userEmail && a.email.trim().toLowerCase() === userEmail)
+  );
+
+  if (existingIndex >= 0) {
+    agents[existingIndex] = {
+      ...agents[existingIndex],
+      id: agentId,
+      name: user.displayName || user.name || agents[existingIndex].name,
+      email: user.email || agents[existingIndex].email,
+      phone: user.phone || agents[existingIndex].phone,
+      vehicleNumber: user.vehicleNumber || agents[existingIndex].vehicleNumber
+    };
+    saveStoredAgents(agents);
+    return agents[existingIndex];
+  } else {
     const newAgent = {
       id: agentId,
       name: user.displayName || user.name || 'New Delivery Agent',

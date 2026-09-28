@@ -162,8 +162,29 @@ export const DeliveryPage = () => {
   // If user role is specifically 'delivery_agent', or if simulate mode is active, render dedicated mobile view!
   const isAgentRole = userRole === ROLES.DELIVERY_AGENT;
   if (isAgentRole || isSimulatingRider) {
+    const userEmail = (currentUser?.email || '').trim().toLowerCase();
+    const matchedAgent = agents.find(a => 
+      (a.id && (a.id === currentUser?.uid || a.id === currentUser?.id)) ||
+      (a.email && userEmail && a.email.trim().toLowerCase() === userEmail)
+    );
+
     const activeAgent = isAgentRole 
-      ? (agents.find(a => a.id === currentUser?.id) || agents[0])
+      ? (matchedAgent || {
+          id: currentUser?.uid || currentUser?.id || `ag-${Date.now()}`,
+          name: currentUser?.displayName || currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Delivery Rider'),
+          email: currentUser?.email || '',
+          phone: currentUser?.phone || '+91 98401 22334',
+          status: 'available',
+          vehicleType: currentUser?.vehicleType || 'two_wheeler',
+          vehicleNumber: currentUser?.vehicleNumber || 'TN 37 CB 1234',
+          zone: currentUser?.zone || 'Coimbatore Hub',
+          assignedOrdersCount: 0,
+          completedToday: 0,
+          failedToday: 0,
+          codCollectedToday: 0,
+          codDepositedToday: 0,
+          rating: 5.0
+        })
       : agents.find(a => a.id === simulatedAgentId) || agents[0];
 
     const riderBatch = batches.find(b => b.agentId === activeAgent?.id && b.status !== 'completed');
