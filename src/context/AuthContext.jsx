@@ -64,10 +64,10 @@ export const AuthProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
-  const login = async (email, password, fallbackRole = null) => {
+  const login = async (email, password, isRegistration = false, fallbackRole = null) => {
     setLoading(true);
     try {
-      const user = await loginWithEmail(email, password, fallbackRole);
+      const user = await loginWithEmail(email, password, isRegistration, fallbackRole);
       if (!isFirebaseConfigured) {
         setCurrentUser(user);
         setUserProfile(user);
@@ -85,7 +85,7 @@ export const AuthProvider = ({ children }) => {
         userRole: user.role || userRole,
         action: 'USER_LOGIN',
         module: 'Authentication',
-        reason: 'Staff login session initiated'
+        reason: isRegistration ? 'New staff registration completed' : 'Staff login session initiated'
       });
       return user;
     } finally {

@@ -117,9 +117,12 @@ export const DEMO_USERS = {
 /**
  * Sign in with email and password via Firebase Auth or Dev Registry
  */
-export const loginWithEmail = async (email, password, fallbackRole = null) => {
+export const loginWithEmail = async (email, password, isRegistration = false, fallbackRole = null) => {
   if (!isFirebaseConfigured) {
     const cleanEmail = (email || '').trim().toLowerCase();
+    if (!cleanEmail) {
+      throw new Error('Please enter a valid staff email address.');
+    }
 
     // 1. Check registered users in localStorage
     const registered = getRegisteredUsers();
@@ -134,17 +137,21 @@ export const loginWithEmail = async (email, password, fallbackRole = null) => {
       return foundDemo;
     }
 
-    // 3. Fallback: Generate user profile dynamically using fallbackRole if provided, else SUPER_ADMIN
-    const targetRole = fallbackRole || ROLES.SUPER_ADMIN;
-    const dynamicUser = {
-      uid: `staff-${Date.now()}`,
-      email: cleanEmail || 'staff@sriammanstore.com',
-      displayName: cleanEmail ? cleanEmail.split('@')[0] : 'Staff Member',
-      role: targetRole,
-      status: 'active'
-    };
-    saveRegisteredUser(dynamicUser);
-    return dynamicUser;
+    // 3. If explicit registration from Staff Sign In tab
+    if (isRegistration && fallbackRole) {
+      const dynamicUser = {
+        uid: `staff-${Date.now()}`,
+        email: cleanEmail,
+        displayName: cleanEmail.split('@')[0],
+        role: fallbackRole,
+        status: 'active'
+      };
+      saveRegisteredUser(dynamicUser);
+      return dynamicUser;
+    }
+
+    // 4. Reject unknown email during Staff Login
+    throw new Error('No staff account found for this email address. Please click on "Staff Sign In" tab to register first.');
   }
   const userCredential = await signInWithEmailAndPassword(auth, email, password);
   return userCredential.user;

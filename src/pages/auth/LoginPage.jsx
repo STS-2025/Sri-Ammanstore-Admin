@@ -50,18 +50,18 @@ export const LoginPage = () => {
     setPassword('password123');
   };
 
-  // Sign In submit
+  // Sign In submit (Staff Login)
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setIsSubmitting(true);
 
     try {
-      // 1. Authenticate user (fallbackRole is selectedRole if user is not pre-registered)
-      const user = await login(email, password, selectedRole);
+      // 1. Authenticate user (isRegistration = false; strictly rejects unregistered emails)
+      const user = await login(email, password, false);
       
-      // 2. The user's actual account role MUST take absolute priority over selectedRole
-      const activeUserRole = user?.role || selectedRole || ROLES.SUPER_ADMIN;
+      // 2. The user's actual account role MUST take absolute priority
+      const activeUserRole = user?.role || ROLES.SUPER_ADMIN;
       const roleDef = ROLE_DEFINITIONS[activeUserRole];
 
       // 3. Update active operational role in AuthContext
@@ -93,7 +93,7 @@ export const LoginPage = () => {
     }
   };
 
-  // Sign Up / Staff Registration submit
+  // Sign Up / Staff Registration submit (Staff Sign In)
   const handleSignupSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -125,9 +125,9 @@ export const LoginPage = () => {
         await ensureDeliveryAgentRegistered(newStaffUser);
       }
 
-      // 3. Switch active role and complete login
+      // 3. Switch active role and complete registration login (isRegistration = true)
       switchDemoRole(assignedRole);
-      await login(signupForm.email, signupForm.password || 'password123', assignedRole);
+      await login(signupForm.email, signupForm.password || 'password123', true, assignedRole);
 
       const roleDef = ROLE_DEFINITIONS[assignedRole];
       notify.success(
