@@ -112,6 +112,8 @@ export const updateOrderStatus = async (orderId, newStatus, reason = '', user) =
   if (newStatus === 'packed') {
     order.packedAt = new Date().toISOString();
     order.packedBy = user?.displayName || 'Packing Staff';
+    delete order.deliveryAgentId;
+    delete order.deliveryAgentName;
     // Mark all pending items as packed
     order.items = (order.items || []).map((item) => ({ ...item, pickStatus: 'packed' }));
   }
@@ -340,3 +342,100 @@ export const processRefund = async ({ returnId, orderId, refundAmount, refundMet
 
   return { success: true, refundAmount };
 };
+
+/**
+ * Create a new Packed Demo Order for testing Delivery Manager dispatch workflow
+ */
+export const createDemoOrder = async (user) => {
+  const orders = getStoredOrders();
+  const nextNum = 9840 + orders.length + 1;
+  const newOrderNumber = `ORD-${nextNum}`;
+  const newId = `ord-demo-${Date.now()}`;
+
+  const newOrder = {
+    id: newId,
+    orderNumber: newOrderNumber,
+    customerName: 'Aravind Swamy',
+    customerPhone: '+91 98765 43210',
+    deliveryAddress: {
+      locality: 'Gandhipuram',
+      addressLine: 'Door 45, Cross Cut Road, Gandhipuram, Coimbatore - 641012'
+    },
+    deliverySlot: 'Morning (08:00 AM - 11:00 AM)',
+    distanceKm: '3.5',
+    priority: 'Normal',
+    itemsCount: 2,
+    status: 'packed',
+    paymentMethod: 'COD',
+    paymentStatus: 'pending',
+    subtotal: 450,
+    gstAmount: 23,
+    deliveryFee: 30,
+    discountAmount: 0,
+    totalAmount: 503,
+    createdAt: new Date().toISOString(),
+    packedAt: new Date().toISOString(),
+    packedBy: user?.displayName || 'Packing Staff',
+    items: [
+      {
+        id: `item-${Date.now()}-1`,
+        productName: 'Sri Amman Parboiled Rice',
+        variantName: '5 kg',
+        sku: 'RICE-PAR-05',
+        quantity: 1,
+        unitPrice: 350,
+        totalPrice: 350,
+        pickStatus: 'packed'
+      },
+      {
+        id: `item-${Date.now()}-2`,
+        productName: 'Aachi Turmeric Powder',
+        variantName: '100g',
+        sku: 'SPICE-TUR-100',
+        quantity: 2,
+        unitPrice: 50,
+        totalPrice: 100,
+        pickStatus: 'packed'
+      }
+    ],
+    timeline: [
+      {
+        status: 'confirmed',
+        label: 'Order Confirmed by Store',
+        timestamp: new Date().toISOString(),
+        actor: 'Customer Web App'
+      },
+      {
+        status: 'packed',
+        label: 'Order Packed & Label Printed',
+        timestamp: new Date().toISOString(),
+        actor: user?.displayName || 'Packing Staff'
+      }
+    ]
+  };
+
+  orders.unshift(newOrder);
+  saveStoredOrders(orders);
+
+  if (isFirebaseConfigured) {
+    try {
+      await setDoc(doc(db, COLLECTIONS.ORDERS, newId), newOrder);
+    } catch (e) {
+      console.error('[Firestore] createDemoOrder setDoc error:', e);
+    }
+  }
+
+  await logActivity({
+    userId: user?.uid,
+    userEmail: user?.email,
+    userRole: user?.role,
+    action: 'CREATE_DEMO_PACKED_ORDER',
+    module: 'Orders',
+    targetId: newId,
+    targetType: 'order',
+    reason: 'Created demo packed order for delivery dispatch testing'
+  });
+
+  return newOrder;
+};
+

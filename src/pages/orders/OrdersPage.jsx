@@ -14,7 +14,8 @@ import {
   Clock,
   Calendar,
   IndianRupee,
-  Layers
+  Layers,
+  Plus
 } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { DataTable } from '../../components/table/DataTable';
@@ -24,7 +25,7 @@ import { PackingWorkstationModal } from '../../components/orders/PackingWorkstat
 import { PrintableDocumentsModal } from '../../components/orders/PrintableDocumentsModal';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { PERMISSIONS } from '../../utils/permissions';
-import { getAllOrders, updateOrderStatus } from '../../firebase/orderService';
+import { getAllOrders, updateOrderStatus, createDemoOrder } from '../../firebase/orderService';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -81,6 +82,16 @@ export const OrdersPage = () => {
       ord.assignedAgentName?.toLowerCase().includes(q)
     );
   });
+
+  const handleCreateDemoOrder = async () => {
+    try {
+      const newOrd = await createDemoOrder(currentUser);
+      notify.success('Packed Order Created', `${newOrd.orderNumber} is now ready for Delivery Manager dispatch!`);
+      loadData();
+    } catch (err) {
+      notify.error('Failed to create order', err.message);
+    }
+  };
 
   const handleOpenPrint = (ord, type = 'invoice') => {
     setPrintTargetOrder(ord);
@@ -219,6 +230,13 @@ export const OrdersPage = () => {
         subtitle="Manage end-to-end order processing, picking workstation checklists, parcel printing, and customer deliveries."
         actions={
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleCreateDemoOrder}
+              className="btn-primary text-xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-medium shadow-sm transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Create Packed Order</span>
+            </button>
             <button
               onClick={() => handleOpenPrint(null, 'manifest')}
               className="btn-secondary text-xs"
