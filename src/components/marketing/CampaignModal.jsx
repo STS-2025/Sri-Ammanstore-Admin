@@ -107,7 +107,7 @@ export const CampaignModal = ({ isOpen, onClose, onSendCampaign, customers = [] 
             {errors.title && <p className="text-[11px] text-rose-600 mt-1">{errors.title}</p>}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                 Communication Channel
@@ -190,7 +190,7 @@ export const CampaignModal = ({ isOpen, onClose, onSendCampaign, customers = [] 
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
               Dispatch Schedule
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className={`p-3 rounded-xl border flex items-center gap-2.5 cursor-pointer text-xs font-semibold ${
                 formData.scheduleMode === 'instant' ? 'border-emerald-500 bg-emerald-50 text-emerald-950' : 'border-slate-200'
               }`}>
@@ -220,7 +220,7 @@ export const CampaignModal = ({ isOpen, onClose, onSendCampaign, customers = [] 
           </div>
 
           {formData.scheduleMode === 'scheduled' && (
-            <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <input
                 type="date"
                 value={formData.scheduledDate}

@@ -67,9 +67,9 @@ export const ConfirmDialog = ({
     (requireTypedWord && typedInput.trim() !== requireTypedWord);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center overflow-y-auto p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
       <div
-        className="w-full max-w-lg bg-white rounded-2xl shadow-modal border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150"
+        className="w-full max-w-lg max-h-[calc(100dvh-1rem)] flex flex-col bg-white rounded-2xl shadow-modal border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150"
         role="dialog"
         aria-modal="true"
       >
@@ -99,7 +99,7 @@ export const ConfirmDialog = ({
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-4">
+        <div className="min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
           <p className="text-sm text-slate-600 leading-relaxed">{message}</p>
 
           {(isHighRisk || requireReason) && (

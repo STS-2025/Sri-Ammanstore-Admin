@@ -112,14 +112,9 @@ export const ActivityLogsPage = () => {
   const loadLogs = () => {
     try {
       const stored = JSON.parse(localStorage.getItem('grocery_admin_audit_logs') || '[]');
-      // Combine local dynamic events with baseline historical records
-      const combined = [...stored, ...SAMPLE_ACTIVITY_AUDIT_LOGS];
-      // Deduplicate by ID
-      const uniqueMap = new Map();
-      combined.forEach(l => uniqueMap.set(l.id || `${l.timestamp}-${l.action}`, l));
-      setLogs(Array.from(uniqueMap.values()));
+      setLogs(stored);
     } catch (e) {
-      setLogs(SAMPLE_ACTIVITY_AUDIT_LOGS);
+      setLogs([]);
     }
   };
 

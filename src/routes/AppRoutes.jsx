@@ -19,13 +19,19 @@ import { SettingsPage } from '../pages/settings/SettingsPage';
 
 // Future Module Roadmaps (Phases 3-5)
 import { OrdersPage } from '../pages/orders/OrdersPage';
+import { ManualOrdersPage } from '../pages/orders/ManualOrdersPage';
+import { ManualLandingPage } from '../pages/orders/ManualLandingPage';
+import { CreateManualOrderPage } from '../pages/orders/CreateManualOrderPage';
 import { CustomersPage } from '../pages/customers/CustomersPage';
+import { ManualCustomersPage } from '../pages/customers/ManualCustomersPage';
+import { BalanceCreditManagementPage } from '../pages/customers/BalanceCreditManagementPage';
 import { DeliveryPage } from '../pages/delivery/DeliveryPage';
 import { PromotionsPage } from '../pages/promotions/PromotionsPage';
 import { MarketingPage } from '../pages/marketing/MarketingPage';
 import { ProductRequestsPage } from '../pages/productRequests/ProductRequestsPage';
 import { ReportsPage } from '../pages/reports/ReportsPage';
 import { NotFoundPage } from '../pages/notFound/NotFoundPage';
+import { MobileScannerConnectPage } from '../pages/scanner/MobileScannerConnectPage';
 
 import { PERMISSIONS } from '../utils/permissions';
 import { ROLE_DEFINITIONS } from '../utils/roles';
@@ -44,6 +50,7 @@ export const AppRoutes = () => {
       {/* Public Routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/unauthorized" element={<UnauthorizedPage />} />
+      <Route path="/scanner/connect" element={<MobileScannerConnectPage />} />
 
       {/* Authenticated Admin Shell Routes */}
       <Route
@@ -104,6 +111,14 @@ export const AppRoutes = () => {
 
         {/* Phase 3: Orders & Customers Roadmap */}
         <Route
+          path="manual"
+          element={
+            <ProtectedRoute requiredAnyPermission={[PERMISSIONS.ORDERS_VIEW, PERMISSIONS.POS_VIEW, PERMISSIONS.CUSTOMERS_VIEW, PERMISSIONS.MANUAL_ACCESS]}>
+              <ManualLandingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="orders"
           element={
             <ProtectedRoute requiredPermission={PERMISSIONS.ORDERS_VIEW}>
@@ -112,10 +127,42 @@ export const AppRoutes = () => {
           }
         />
         <Route
+          path="orders/create-manual-order"
+          element={
+            <ProtectedRoute requiredAnyPermission={[PERMISSIONS.ORDERS_VIEW, PERMISSIONS.POS_VIEW, PERMISSIONS.MANUAL_ACCESS]}>
+              <CreateManualOrderPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="manual-orders"
+          element={
+            <ProtectedRoute requiredAnyPermission={[PERMISSIONS.ORDERS_VIEW, PERMISSIONS.MANUAL_ACCESS]}>
+              <ManualOrdersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="customers"
           element={
             <ProtectedRoute requiredPermission={PERMISSIONS.CUSTOMERS_VIEW}>
               <CustomersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="manual-customers"
+          element={
+            <ProtectedRoute requiredAnyPermission={[PERMISSIONS.CUSTOMERS_VIEW, PERMISSIONS.MANUAL_ACCESS]}>
+              <ManualCustomersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="manual-balance-credit"
+          element={
+            <ProtectedRoute requiredAnyPermission={[PERMISSIONS.CUSTOMERS_VIEW, PERMISSIONS.MANUAL_ACCESS]}>
+              <BalanceCreditManagementPage />
             </ProtectedRoute>
           }
         />

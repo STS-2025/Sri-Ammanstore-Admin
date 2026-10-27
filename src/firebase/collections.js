@@ -22,6 +22,7 @@ export const COLLECTIONS = {
 
   // Customers & CRM
   CUSTOMERS: 'customers',
+  ONLINE_CUSTOMERS: 'onlineCustomers',
   ADDRESSES: 'addresses',
 
   // Orders & Fulfillment
@@ -56,7 +57,12 @@ export const COLLECTIONS = {
 
   // Governance, Audit Trail & Settings
   ACTIVITY_LOGS: 'activityLogs',
-  BUSINESS_SETTINGS: 'businessSettings'
+  BUSINESS_SETTINGS: 'businessSettings',
+
+  // POS & Customer Ledger Extensions
+  CUSTOMER_LEDGER: 'customerLedger',
+  HELD_BILLS: 'heldBills',
+  SCANNER_SESSIONS: 'scannerSessions'
 };
 
 /**

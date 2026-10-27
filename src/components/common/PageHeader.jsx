@@ -10,8 +10,8 @@ export const PageHeader = ({
   badge
 }) => {
   return (
-    <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-      <div>
+    <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 min-w-0">
+      <div className="min-w-0">
         {breadcrumbs.length > 0 && (
           <nav className="flex items-center gap-1.5 text-xs text-slate-400 mb-1.5">
             {breadcrumbs.map((crumb, idx) => {
@@ -38,7 +38,7 @@ export const PageHeader = ({
         )}
 
         <div className="flex items-center gap-3">
-          <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 font-sans">
+          <h1 className="min-w-0 text-xl md:text-2xl font-bold tracking-tight text-slate-900 font-sans break-words">
             {title}
           </h1>
           {badge && <div>{badge}</div>}
@@ -50,7 +50,7 @@ export const PageHeader = ({
       </div>
 
       {actions && (
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+        <div className="flex w-full md:w-auto flex-wrap items-center justify-start md:justify-end gap-2.5">
           {actions}
         </div>
       )}

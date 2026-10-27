@@ -10,10 +10,10 @@ export const FilterBar = ({
   hasActiveFilters = false
 }) => {
   return (
-    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 bg-white border-b border-slate-100">
+    <div className="flex min-w-0 flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 bg-white border-b border-slate-100">
       {/* Tab Pills */}
       {tabs.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
+        <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
@@ -43,7 +43,7 @@ export const FilterBar = ({
       )}
 
       {/* Custom Filter Controls / Reset */}
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         {filters}
 
         {hasActiveFilters && onResetFilters && (

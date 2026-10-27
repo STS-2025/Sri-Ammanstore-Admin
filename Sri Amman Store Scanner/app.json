@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Sri Amman Store Scanner",
+    "slug": "sri-amman-store-scanner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "sriammanstore",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sriammanstore.scanner",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Sri Amman Store Scanner uses the camera to scan connection QR codes and product barcodes."
+      }
+    },
+    "android": {
+      "package": "com.sriammanstore.scanner",
+      "permissions": [
+        "CAMERA",
+        "VIBRATE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "sriammanstore",
+              "host": "scanner"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Sri Amman Store Scanner to scan connection QR codes and product barcodes."
+        }
+      ]
+    ]
+  }
+}

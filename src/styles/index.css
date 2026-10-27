@@ -64,3 +64,72 @@
     @apply block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5;
   }
 }
+@media print {
+  @page {
+    size: 80mm 150mm;
+    margin: 0;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  body:has(.pos-receipt-print-root) {
+    overflow: hidden !important;
+  }
+
+  body:has(.pos-receipt-print-root) #root {
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .pos-receipt-print-root,
+  .pos-receipt-print-root .pos-receipt-print-content,
+  .pos-receipt-print-root .pos-receipt-print-content * {
+    visibility: visible !important;
+  }
+
+  .pos-receipt-print-root {
+    position: fixed !important;
+    inset: 0 !important;
+    display: block !important;
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .pos-receipt-print-shell {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .pos-receipt-print-body {
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .pos-receipt-print-content {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}

@@ -361,7 +361,7 @@ export const PackingWorkstationModal = ({
         <form onSubmit={handleExecuteUnavailableWorkflow} className="space-y-4 text-xs">
           <div>
             <label className="input-label">Select Operational Resolution</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
                 { id: 'replace', label: 'Suggest Replacement' },
                 { id: 'partial_fulfill', label: 'Partial Fulfill' },

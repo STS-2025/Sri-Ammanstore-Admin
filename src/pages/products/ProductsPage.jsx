@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Package,
@@ -17,7 +17,8 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
-  ArrowUpDown
+  ArrowUpDown,
+  Upload
 } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { DataTable } from '../../components/table/DataTable';
@@ -36,13 +37,56 @@ import {
   duplicateProduct,
   updateVariantPrice
 } from '../../firebase/productService';
-import { INITIAL_CATEGORIES } from '../../data/grocerySeedData';
+import { getAllCategories } from '../../firebase/categoryService';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import { INITIAL_CATEGORIES, INITIAL_BRANDS } from '../../data/grocerySeedData';
+import { groupProductImportRows, readProductImportRows } from '../../utils/productExcel';
+
+class ModalErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error, info) {
+    console.error('[Modal Error caught]:', error, info);
+  }
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="w-full max-w-md p-6 space-y-3 text-center bg-white shadow-2xl rounded-2xl">
+            <h3 className="text-base font-bold text-slate-900">Form Render Issue</h3>
+            <p className="text-xs text-slate-500">Could not display product form for this item. Please try editing another product or refresh.</p>
+            <button
+              onClick={() => {
+                this.setState({ hasError: false });
+                if (this.props.onReset) this.props.onReset();
+              }}
+              className="px-4 py-2 font-sans text-xs font-bold text-white shadow bg-emerald-800 rounded-xl hover:bg-emerald-900"
+            >
+              Close & Reset
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export const ProductsPage = () => {
   const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -55,6 +99,13 @@ export const ProductsPage = () => {
   const [priceChangeTarget, setPriceChangeTarget] = useState({ product: null, variant: null });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState(null);
+  const importFileRef = useRef(null);
+  const importImagesRef = useRef(null);
+  const importFolderRef = useRef(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importExcelFile, setImportExcelFile] = useState(null);
+  const [importImageFiles, setImportImageFiles] = useState([]);
+  const [importing, setImporting] = useState(false);
 
   const notify = useNotification();
   const { currentUser, userRole } = usePermissions();
@@ -63,8 +114,12 @@ export const ProductsPage = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const data = await getAllProducts();
+      const [data, liveCats] = await Promise.all([
+        getAllProducts(),
+        getAllCategories()
+      ]);
       setProducts(data);
+      setCategories(liveCats || []);
     } catch (err) {
       notify.error('Failed to load products', err.message);
     } finally {
@@ -78,7 +133,12 @@ export const ProductsPage = () => {
 
   // Filtered Products
   const filteredProducts = products.filter((p) => {
-    if (categoryFilter !== 'ALL' && p.categoryId !== categoryFilter) return false;
+    if (
+      categoryFilter !== 'ALL' &&
+      p.categoryId !== categoryFilter &&
+      p.categoryName !== categoryFilter &&
+      p.category !== categoryFilter
+    ) return false;
 
     // Status Tab logic
     if (statusTab === 'active' && p.status !== 'active') return false;
@@ -119,6 +179,107 @@ export const ProductsPage = () => {
       await loadData();
     } catch (err) {
       notify.error('Action Failed', err.message);
+    }
+  };
+
+  const compressImportImage = async (file) => {
+    const image = await createImageBitmap(file);
+    try {
+      for (const maxDimension of [1200, 900, 700, 550, 400]) {
+        const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not prepare an uploaded product image.');
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        for (const quality of [0.8, 0.65, 0.5, 0.35]) {
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+          // The data URL is repeated in imageUrl/frontImageUrl/imageUrls fields.
+          // Keep each image small enough for Firestore's per-document size limit.
+          if (blob && blob.size <= 85_000) return blob;
+        }
+      }
+      throw new Error(`Could not compress ${file.name} enough to fit in the product database record.`);
+    } finally {
+      image.close();
+    }
+  };
+
+  const fileToImportDataUrl = async (file) => {
+    const blob = await compressImportImage(file);
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const handleImportProducts = async () => {
+    if (!importExcelFile) {
+      notify.error('Excel file required', 'Choose the product Excel file to continue.');
+      return;
+    }
+    setImporting(true);
+    try {
+      const rows = readProductImportRows(await importExcelFile.text(), importExcelFile.name);
+      const categoryOptions = categories.length ? categories : INITIAL_CATEGORIES;
+      const productsToImport = groupProductImportRows(rows, categoryOptions, INITIAL_BRANDS);
+      if (!productsToImport.length) throw new Error('The Excel file has no product rows to import.');
+      const productIds = productsToImport.map((product) => String(product.__importProductId || '').trim().toLocaleLowerCase()).filter(Boolean);
+      if (new Set(productIds).size !== productIds.length) throw new Error('Each distinct product must have a unique ProductID in the Excel file.');
+
+      const imagePairs = new Map();
+      importImageFiles.forEach((file) => {
+        if (!file.type.startsWith('image/')) return;
+        const filename = file.name.split(/[\\/]/).pop();
+        const match = filename.match(/^(.+)-(front|back)\.[^.]+$/i);
+        if (!match) return;
+        const productId = match[1].trim().toLocaleLowerCase();
+        const side = match[2].toLocaleLowerCase();
+        if (!imagePairs.has(productId)) imagePairs.set(productId, {});
+        if (imagePairs.get(productId)[side]) {
+          throw new Error(`More than one ${side} image was selected for ProductID "${match[1]}".`);
+        }
+        imagePairs.get(productId)[side] = file;
+      });
+
+      const matchedIds = new Set();
+      for (const product of productsToImport) {
+        const productId = String(product.__importProductId || '').trim();
+        const pair = imagePairs.get(productId.toLocaleLowerCase());
+        const productData = { ...product };
+        delete productData.__importProductId;
+        if (pair) {
+          matchedIds.add(productId.toLocaleLowerCase());
+          for (const side of ['front', 'back']) {
+            const imageFile = pair[side];
+            if (!imageFile) continue;
+            const imageUrl = await fileToImportDataUrl(imageFile);
+            if (side === 'front') {
+              productData.frontImageUrl = imageUrl;
+              productData.imageUrl = imageUrl;
+            } else {
+              productData.backImageUrl = imageUrl;
+            }
+          }
+        }
+        await createProduct(productData, currentUser, { requireRemote: true });
+      }
+      const unmatchedImages = [...imagePairs.keys()].filter((id) => !matchedIds.has(id)).length;
+      notify.success('Excel Import Complete', `${productsToImport.length} product${productsToImport.length === 1 ? '' : 's'} imported${unmatchedImages ? `; ${unmatchedImages} image pair${unmatchedImages === 1 ? '' : 's'} did not match a ProductID` : ''}.`);
+      setImportModalOpen(false);
+      setImportExcelFile(null);
+      setImportImageFiles([]);
+      await loadData();
+    } catch (err) {
+      const message = err.message || 'Could not import products from this file.';
+      notify.error('Excel Import Failed', message);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -183,9 +344,13 @@ export const ProductsPage = () => {
       sortable: true,
       render: (row) => (
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center shrink-0">
-            {row.imageUrl ? (
-              <img src={row.imageUrl} alt={row.name} className="w-full h-full object-cover" />
+          <div className="flex items-center justify-center w-12 h-12 overflow-hidden border rounded-xl bg-slate-100 border-slate-200 shrink-0">
+            {row.imageUrl || row.frontImageUrl || (Array.isArray(row.imageUrls) ? row.imageUrls[0] : null) ? (
+              <img
+                src={row.imageUrl || row.frontImageUrl || row.imageUrls[0]}
+                alt={row.name}
+                className="object-cover w-full h-full"
+              />
             ) : (
               <Package className="w-6 h-6 text-slate-400" />
             )}
@@ -200,7 +365,7 @@ export const ProductsPage = () => {
             <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 font-semibold mt-0.5">
               <span>{row.categoryName}</span>
               <span className="text-slate-300">•</span>
-              <span className="text-slate-500 font-normal">{row.brandName}</span>
+              <span className="font-normal text-slate-500">{row.brandName}</span>
             </div>
           </div>
         </div>
@@ -235,14 +400,16 @@ export const ProductsPage = () => {
       align: 'right',
       render: (row) => {
         const primary = row.variants?.[0] || {};
+        const sellingPrice = Number(primary.sellingPrice ?? primary.price ?? row.sellingPrice ?? row.price ?? 0);
+        const mrp = Number(primary.mrp ?? primary.originalPrice ?? row.mrp ?? row.price ?? 0);
         return (
           <div className="text-right">
-            <div className="font-bold font-sans text-slate-900 text-xs">
-              {formatCurrency(primary.sellingPrice || 0)}
+            <div className="font-sans text-xs font-bold text-slate-900">
+              {formatCurrency(sellingPrice)}
             </div>
-            {primary.mrp > primary.sellingPrice && (
+            {mrp > sellingPrice && (
               <div className="text-[10px] text-slate-400 line-through font-sans">
-                {formatCurrency(primary.mrp || 0)}
+                {formatCurrency(mrp)}
               </div>
             )}
           </div>
@@ -356,9 +523,20 @@ export const ProductsPage = () => {
         subtitle="Manage Sri Amman Store grocery items, multi-pack variants, regional naming, and pricing."
         actions={
           <div className="flex items-center gap-2">
+            <PermissionGuard permission={PERMISSIONS.PRODUCTS_CREATE}>
+              <button
+                type="button"
+                onClick={() => setImportModalOpen(true)}
+                className="text-xs btn-secondary"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Import Excel</span>
+              </button>
+            </PermissionGuard>
+
             <button
               onClick={() => navigate('/products/ranking')}
-              className="btn-secondary text-xs"
+              className="text-xs btn-secondary"
             >
               <ArrowUpDown className="w-3.5 h-3.5" />
               <span>Featured</span>
@@ -370,7 +548,7 @@ export const ProductsPage = () => {
                   setEditingProduct(null);
                   setFormModalOpen(true);
                 }}
-                className="btn-primary text-xs"
+                className="text-xs btn-primary"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add Grocery Product</span>
@@ -381,20 +559,20 @@ export const ProductsPage = () => {
       />
 
       {/* Filter and Status Controls */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-subtle space-y-3">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+      <div className="p-4 space-y-3 bg-white border rounded-xl border-slate-200 shadow-subtle">
+        <div className="flex flex-col items-center justify-between gap-3 md:flex-row">
           <div className="relative w-full md:w-96">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+            <Search className="absolute w-4 h-4 pointer-events-none text-slate-400 left-3 top-3" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search product name, Tamil title, SKU, or barcode..."
-              className="input-text pl-9 text-xs"
+              className="text-xs input-text pl-9"
             />
           </div>
 
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center w-full gap-2 md:w-auto">
             <Filter className="w-4 h-4 text-slate-400 shrink-0" />
             <select
               value={categoryFilter}
@@ -402,7 +580,7 @@ export const ProductsPage = () => {
               className="input-text text-xs py-1.5"
             >
               <option value="ALL">All Categories</option>
-              {INITIAL_CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -446,15 +624,52 @@ export const ProductsPage = () => {
       />
 
       {/* Add / Edit Modal */}
-      <ProductFormModal
-        isOpen={formModalOpen}
-        onClose={() => {
+      <ModalErrorBoundary
+        resetKey={editingProduct?.id || (formModalOpen ? 'open' : 'closed')}
+        onReset={() => {
           setFormModalOpen(false);
           setEditingProduct(null);
         }}
-        onSubmit={handleSaveProduct}
-        initialData={editingProduct}
-      />
+      >
+        <ProductFormModal
+          isOpen={formModalOpen}
+          onClose={() => {
+            setFormModalOpen(false);
+            setEditingProduct(null);
+          }}
+          onSubmit={handleSaveProduct}
+          initialData={editingProduct}
+        />
+      </ModalErrorBoundary>
+
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="w-full max-w-xl p-6 space-y-5 bg-white shadow-2xl rounded-2xl">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Import Products from Excel</h3>
+              <p className="mt-1 text-xs text-slate-500">Upload the spreadsheet and product images. Image names must follow ProductID-front or ProductID-back. Images are compressed and saved in the product database record.</p>
+            </div>
+            <div className="space-y-4">
+              <label className="block space-y-1.5">
+                <span className="text-xs font-bold text-slate-700">1. Product Excel file</span>
+                <input ref={importFileRef} type="file" accept=".xls,.csv,application/vnd.ms-excel,text/csv" onChange={(event) => setImportExcelFile(event.target.files?.[0] || null)} className="block w-full text-xs text-slate-600 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-emerald-50 file:text-emerald-800 file:font-bold" />
+                <span className="block text-[11px] text-slate-500">{importExcelFile?.name || 'Select the Excel file downloaded from Settings.'}</span>
+              </label>
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-slate-700">2. Product images</span>
+                <input ref={importImagesRef} type="file" accept="image/*" multiple onChange={(event) => setImportImageFiles(Array.from(event.target.files || []))} className="block w-full text-xs text-slate-600 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-800 file:font-bold" />
+                <input ref={importFolderRef} type="file" accept="image/*" multiple directory="" webkitdirectory="" onChange={(event) => setImportImageFiles(Array.from(event.target.files || []))} className="hidden" />
+                <button type="button" onClick={() => importFolderRef.current?.click()} className="text-xs font-semibold text-blue-700 underline">Choose a folder</button>
+                <span className="block text-[11px] text-slate-500">{importImageFiles.length ? `${importImageFiles.length} image file${importImageFiles.length === 1 ? '' : 's'} selected` : 'Select multiple files or a folder containing files such as PROD001-front.jpg and PROD001-back.jpg.'}</span>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" disabled={importing} onClick={() => { setImportModalOpen(false); setImportExcelFile(null); setImportImageFiles([]); }} className="px-4 py-2 text-xs font-bold border rounded-lg border-slate-200 text-slate-600 disabled:opacity-50">Cancel</button>
+              <button type="button" disabled={importing || !importExcelFile} onClick={handleImportProducts} className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 rounded-lg hover:bg-emerald-800 disabled:opacity-50">{importing ? 'Importing…' : 'Import Products'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Price Revision Dialog */}
       <ProductPriceChangeDialog

@@ -9,13 +9,9 @@ const REQUESTS_KEY = 'grocery_admin_product_requests_v4';
 const getStoredRequests = () => {
   try {
     const raw = localStorage.getItem(REQUESTS_KEY);
-    if (!raw) {
-      localStorage.setItem(REQUESTS_KEY, JSON.stringify(INITIAL_REQUESTED_PRODUCTS));
-      return INITIAL_REQUESTED_PRODUCTS;
-    }
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    return INITIAL_REQUESTED_PRODUCTS;
+    return [];
   }
 };
 
@@ -36,15 +32,39 @@ export const getAllProductRequests = async () => {
   }
 
   try {
-    const snap = await getDocs(collection(db, COLLECTIONS.PRODUCT_REQUESTS));
-    if (snap.empty) {
-      const local = getStoredRequests();
-      for (const r of local) {
-        await setDoc(doc(db, COLLECTIONS.PRODUCT_REQUESTS, r.id), { ...r, createdAt: serverTimestamp() });
-      }
-      return local;
+    let list1 = [];
+    try {
+      const snap1 = await getDocs(collection(db, COLLECTIONS.PRODUCT_REQUESTS));
+      list1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (e1) {
+      console.warn('productRequests fetch note:', e1.message);
     }
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    let list2 = [];
+    try {
+      const snap2 = await getDocs(collection(db, 'requested-products'));
+      list2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (e2) {
+      console.warn('requested-products fetch note:', e2.message);
+    }
+
+    const combined = [...list1, ...list2];
+    const map = new Map();
+    combined.forEach(item => {
+      const norm = {
+        ...item,
+        id: item.id,
+        productName: item.productName || item.name || 'Requested Product',
+        customerName: item.customerName || item.userName || item.userEmail || 'Store Customer',
+        customerPhone: item.customerPhone || item.userPhone || '',
+        status: item.status || 'new'
+      };
+      map.set(item.id, norm);
+    });
+
+    const result = Array.from(map.values());
+    if (result.length > 0) return result;
+    return getStoredRequests();
   } catch (err) {
     console.warn('Firestore product requests fetch failed:', err);
     return getStoredRequests();
@@ -144,4 +164,62 @@ export const createProductRequest = async (requestData, user) => {
   }
 
   return newReq;
+};
+
+/**
+ * Delete a single product request by ID
+ */
+export const deleteProductRequest = async (requestId, user) => {
+  const reqs = getStoredRequests();
+  const target = reqs.find(r => r.id === requestId);
+  const updatedReqs = reqs.filter(r => r.id !== requestId);
+  saveStoredRequests(updatedReqs);
+
+  if (isFirebaseConfigured) {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.PRODUCT_REQUESTS, requestId));
+      await deleteDoc(doc(db, 'requested-products', requestId));
+    } catch (err) {
+      console.warn('Firestore request delete failed:', err);
+    }
+  }
+
+  await logActivity(
+    user || { id: 'admin', name: 'Inventory Manager' },
+    'product_requests.delete',
+    COLLECTIONS.PRODUCT_REQUESTS,
+    requestId,
+    `Deleted wishlist request "${target?.productName || requestId}"`
+  );
+
+  return true;
+};
+
+/**
+ * Clear all customer product requests (e.g. dummy test requests)
+ */
+export const clearAllProductRequests = async (user) => {
+  saveStoredRequests([]);
+
+  if (isFirebaseConfigured) {
+    try {
+      const snap1 = await getDocs(collection(db, COLLECTIONS.PRODUCT_REQUESTS));
+      const del1 = snap1.docs.map(d => deleteDoc(d.ref));
+      const snap2 = await getDocs(collection(db, 'requested-products'));
+      const del2 = snap2.docs.map(d => deleteDoc(d.ref));
+      await Promise.all([...del1, ...del2]);
+    } catch (err) {
+      console.warn('Firestore clear requests failed:', err);
+    }
+  }
+
+  await logActivity(
+    user || { id: 'admin', name: 'Inventory Manager' },
+    'product_requests.clear_all',
+    COLLECTIONS.PRODUCT_REQUESTS,
+    'all',
+    'Cleared all test customer product requests'
+  );
+
+  return true;
 };

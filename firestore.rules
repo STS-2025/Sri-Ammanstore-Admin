@@ -18,39 +18,61 @@ service cloud.firestore {
       return getUserData().role;
     }
 
+    function isValidStaffRole(role) {
+      return role in [
+        'super_admin',
+        'store_manager',
+        'inventory_staff',
+        'delivery_manager',
+        'packing_staff',
+        'delivery_agent',
+        'marketing_staff',
+        'accounts_staff',
+        'manual_staff'
+      ];
+    }
+
+    function hasActiveStaffProfile() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserData().status == 'active' &&
+        isValidStaffRole(getUserRole());
+    }
+
     function isSuperAdmin() {
-      return isAuthenticated() && (
-        getUserRole() == 'super_admin' ||
-        (request.auth.token.role != null && request.auth.token.role == 'super_admin')
-      );
+      return hasActiveStaffProfile() && getUserRole() == 'super_admin';
     }
 
     function isStoreManager() {
-      return isAuthenticated() && (isSuperAdmin() || getUserRole() == 'store_manager');
+      return hasActiveStaffProfile() && (isSuperAdmin() || getUserRole() == 'store_manager');
     }
 
     function isInventoryStaff() {
-      return isAuthenticated() && (isStoreManager() || getUserRole() == 'inventory_staff');
+      return hasActiveStaffProfile() && (isStoreManager() || getUserRole() == 'inventory_staff');
     }
 
     function isPackingStaff() {
-      return isAuthenticated() && (isStoreManager() || getUserRole() == 'packing_staff');
+      return hasActiveStaffProfile() && (isStoreManager() || getUserRole() == 'packing_staff');
     }
 
     function isDeliveryManager() {
-      return isAuthenticated() && (isStoreManager() || getUserRole() == 'delivery_manager');
+      return hasActiveStaffProfile() && (isStoreManager() || getUserRole() == 'delivery_manager');
     }
 
     function isDeliveryAgent() {
-      return isAuthenticated() && getUserRole() == 'delivery_agent';
+      return hasActiveStaffProfile() && getUserRole() == 'delivery_agent';
     }
 
     function isMarketingStaff() {
-      return isAuthenticated() && (isStoreManager() || getUserRole() == 'marketing_staff');
+      return hasActiveStaffProfile() && (isStoreManager() || getUserRole() == 'marketing_staff');
     }
 
     function isAccountsStaff() {
-      return isAuthenticated() && (isStoreManager() || getUserRole() == 'accounts_staff');
+      return hasActiveStaffProfile() && (isStoreManager() || getUserRole() == 'accounts_staff');
+    }
+
+    function isManualStaff() {
+      return hasActiveStaffProfile() && getUserRole() == 'manual_staff';
     }
 
     // ==========================================================
@@ -58,9 +80,22 @@ service cloud.firestore {
     // ==========================================================
     match /users/{userId} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isStoreManager());
-      allow create: if isSuperAdmin();
-      allow update: if isSuperAdmin() || (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'permissions', 'status']));
-      allow delete: if isSuperAdmin();
+      allow create: if isSuperAdmin() &&
+        request.resource.data.uid == userId &&
+        isValidStaffRole(request.resource.data.role) &&
+        request.resource.data.status == 'active';
+      allow update: if (
+          isSuperAdmin() &&
+          userId != request.auth.uid &&
+          request.resource.data.uid == userId &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || isValidStaffRole(request.resource.data.role)) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) || request.resource.data.status in ['active', 'disabled'])
+        ) || (
+          request.auth.uid == userId &&
+          request.resource.data.uid == userId &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'email', 'role', 'permissions', 'status', 'delegatedPermissions'])
+        );
+      allow delete: if isSuperAdmin() && userId != request.auth.uid;
     }
 
     match /roles/{roleId} {
@@ -123,10 +158,17 @@ service cloud.firestore {
     // CUSTOMERS & ADDRESSES
     // ==========================================================
     match /customers/{customerId} {
-      allow read: if isStoreManager() || isAccountsStaff() || (isAuthenticated() && request.auth.uid == customerId);
+      allow read: if isStoreManager() || isAccountsStaff() || isManualStaff() || (isAuthenticated() && request.auth.uid == customerId);
       allow create: if isAuthenticated();
-      allow update: if isStoreManager() || (isAuthenticated() && request.auth.uid == customerId);
-      allow delete: if isSuperAdmin();
+      allow update: if isStoreManager() || isManualStaff() || (isAuthenticated() && request.auth.uid == customerId);
+      allow delete: if isSuperAdmin() || isManualStaff();
+    }
+
+    match /onlineCustomers/{customerId} {
+      allow read: if isStoreManager() || isAccountsStaff() || isManualStaff() || (isAuthenticated() && request.auth.uid == customerId);
+      allow create: if isAuthenticated();
+      allow update: if isStoreManager() || isManualStaff() || (isAuthenticated() && request.auth.uid == customerId);
+      allow delete: if isSuperAdmin() || isManualStaff();
     }
 
     match /addresses/{addressId} {
@@ -140,14 +182,16 @@ service cloud.firestore {
     match /orders/{orderId} {
       // Delivery agent can ONLY read orders assigned to them
       allow read: if isStoreManager() || isPackingStaff() || isAccountsStaff() ||
+                     (isManualStaff() && resource.data.orderSource == 'manual') ||
                      (isDeliveryAgent() && resource.data.deliveryAgentId == request.auth.uid) ||
                      (isAuthenticated() && resource.data.customerId == request.auth.uid);
       
       allow create: if isAuthenticated(); // Customer app or staff
       allow update: if isStoreManager() ||
+                       (isManualStaff() && resource.data.orderSource == 'manual' && request.resource.data.orderSource == 'manual') ||
                        (isPackingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'packedAt', 'packedBy', 'packingNotes'])) ||
                        (isDeliveryAgent() && resource.data.deliveryAgentId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'deliveryNotes', 'deliveredAt', 'proofOfDeliveryUrl', 'codAmountCollected']));
-      allow delete: if isSuperAdmin();
+      allow delete: if isSuperAdmin() || (isManualStaff() && resource.data.orderSource == 'manual');
     }
 
     match /orderItems/{itemId} {
@@ -258,9 +302,88 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
+    // Pair mobile barcode scanners with a short-lived POS session.
+    match /scannerSessions/{sessionId} {
+      allow read: if isAuthenticated();
+      allow create: if hasActiveStaffProfile() &&
+        request.resource.data.status == 'WAITING_FOR_MOBILE' &&
+        request.resource.data.token is string &&
+        request.resource.data.token.size() >= 16;
+      allow update: if hasActiveStaffProfile() ||
+        (
+          isAuthenticated() &&
+          request.resource.data.verifiedToken == resource.data.token &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status',
+            'verifiedToken',
+            'connectedDeviceId',
+            'connectedDeviceName',
+            'connectedAt',
+            'lastActivityAt',
+            'disconnectedAt'
+          ]) &&
+          request.resource.data.status in ['CONNECTED', 'DISCONNECTED']
+        );
+      allow delete: if hasActiveStaffProfile();
+
+      match /scanEvents/{eventId} {
+        function parentSession() {
+          return get(/databases/$(database)/documents/scannerSessions/$(sessionId)).data;
+        }
+
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() &&
+          parentSession().status == 'CONNECTED' &&
+          request.resource.data.token == parentSession().token &&
+          request.resource.data.eventId == eventId &&
+          request.resource.data.sessionId == sessionId &&
+          request.resource.data.type == 'BARCODE_SCANNED' &&
+          request.resource.data.status == 'pending' &&
+          request.resource.data.barcode is string &&
+          request.resource.data.barcode.size() > 0 &&
+          request.resource.data.keys().hasOnly([
+            'scanId',
+            'sessionId',
+            'adminUid',
+            'storeId',
+            'scannerId',
+            'productId',
+            'barcode',
+            'productNameSnapshot',
+            'price',
+            'stock',
+            'quantity',
+            'scannedAt',
+            'imageUrl',
+            'eventId',
+            'type',
+            'deviceId',
+            'status',
+            'result',
+            'token',
+            'createdAt',
+            'serverTimestamp'
+          ]);
+        allow update: if hasActiveStaffProfile() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status',
+            'result',
+            'processedAt'
+          ]) &&
+          request.resource.data.status in ['processed', 'failed'];
+        allow delete: if hasActiveStaffProfile();
+      }
+    }
+
     match /smartCoinTransactions/{txId} {
       allow read: if isAccountsStaff() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
       allow write: if isAccountsStaff();
+    }
+
+    match /customerLedger/{ledgerId} {
+      allow read: if isStoreManager() || isAccountsStaff() || isManualStaff();
+      allow create: if isStoreManager() || isAccountsStaff() || isManualStaff();
+      allow update, delete: if isSuperAdmin();
     }
 
     // ==========================================================

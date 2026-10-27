@@ -33,27 +33,15 @@ const DEFAULT_TEMPLATES = [
     event: 'order_delivered',
     content: 'Delivered! Order #{Order ID} has reached you. Smart Coins have been credited to your account. Enjoy fresh grocery from Sri Amman Store!',
     variables: ['{Customer Name}', '{Order ID}']
-  },
-  {
-    id: 'tmpl-festive-broadcast',
-    name: 'Festive Season Promo Blast',
-    channel: 'push',
-    event: 'marketing_blast',
-    content: '🌾 Festive discounts live at Sri Amman Store! Get flat ₹100 off on fresh cooking powders with code AMMANFEST. Order now: {Tracking Link}',
-    variables: ['{Customer Name}', '{Tracking Link}']
   }
 ];
 
 const getStoredBanners = () => {
   try {
     const raw = localStorage.getItem(BANNERS_KEY);
-    if (!raw) {
-      localStorage.setItem(BANNERS_KEY, JSON.stringify(INITIAL_BANNERS));
-      return INITIAL_BANNERS;
-    }
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    return INITIAL_BANNERS;
+    return [];
   }
 };
 
@@ -68,13 +56,9 @@ const saveStoredBanners = (items) => {
 const getStoredAnnouncements = () => {
   try {
     const raw = localStorage.getItem(ANNOUNCEMENTS_KEY);
-    if (!raw) {
-      localStorage.setItem(ANNOUNCEMENTS_KEY, JSON.stringify(INITIAL_ANNOUNCEMENTS));
-      return INITIAL_ANNOUNCEMENTS;
-    }
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    return INITIAL_ANNOUNCEMENTS;
+    return [];
   }
 };
 
@@ -89,13 +73,9 @@ const saveStoredAnnouncements = (items) => {
 const getStoredCampaigns = () => {
   try {
     const raw = localStorage.getItem(CAMPAIGNS_KEY);
-    if (!raw) {
-      localStorage.setItem(CAMPAIGNS_KEY, JSON.stringify(INITIAL_CAMPAIGNS));
-      return INITIAL_CAMPAIGNS;
-    }
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    return INITIAL_CAMPAIGNS;
+    return [];
   }
 };
 
@@ -110,11 +90,7 @@ const saveStoredCampaigns = (items) => {
 const getStoredTemplates = () => {
   try {
     const raw = localStorage.getItem(TEMPLATES_KEY);
-    if (!raw) {
-      localStorage.setItem(TEMPLATES_KEY, JSON.stringify(DEFAULT_TEMPLATES));
-      return DEFAULT_TEMPLATES;
-    }
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : DEFAULT_TEMPLATES;
   } catch (e) {
     return DEFAULT_TEMPLATES;
   }
@@ -138,11 +114,7 @@ export const getAllBanners = async () => {
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.BANNERS));
     if (snap.empty) {
-      const local = getStoredBanners();
-      for (const b of local) {
-        await setDoc(doc(db, COLLECTIONS.BANNERS, b.id), { ...b, createdAt: serverTimestamp() });
-      }
-      return local;
+      return [];
     }
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (err) {
@@ -152,9 +124,11 @@ export const getAllBanners = async () => {
 };
 
 export const createBanner = async (bannerData, user) => {
+  const imageUrl = bannerData.desktopImageUrl || bannerData.imageUrl || bannerData.mobileImageUrl || '';
   const newBanner = {
     ...bannerData,
     id: bannerData.id || `ban-${Date.now().toString().slice(-4)}`,
+    imageUrl,
     clicks: 0,
     status: bannerData.status || 'active',
     priority: Number(bannerData.priority) || 1,
@@ -163,7 +137,6 @@ export const createBanner = async (bannerData, user) => {
 
   const banners = getStoredBanners();
   banners.push(newBanner);
-  // Sort by priority ascending
   banners.sort((a, b) => a.priority - b.priority);
   saveStoredBanners(banners);
 
@@ -192,14 +165,15 @@ export const updateBanner = async (bannerId, updates, user) => {
   const idx = banners.findIndex(b => b.id === bannerId);
   if (idx === -1) throw new Error('Banner not found');
 
-  const updated = { ...banners[idx], ...updates, updatedAt: new Date().toISOString() };
+  const imageUrl = updates.desktopImageUrl || updates.imageUrl || updates.mobileImageUrl || banners[idx].imageUrl || banners[idx].desktopImageUrl || '';
+  const updated = { ...banners[idx], ...updates, imageUrl, updatedAt: new Date().toISOString() };
   banners[idx] = updated;
   banners.sort((a, b) => a.priority - b.priority);
   saveStoredBanners(banners);
 
   if (isFirebaseConfigured) {
     try {
-      await updateDoc(doc(db, COLLECTIONS.BANNERS, bannerId), { ...updates, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, COLLECTIONS.BANNERS, bannerId), { ...updates, imageUrl, updatedAt: serverTimestamp() });
     } catch (e) {
       console.warn('Firestore banner update failed:', e);
     }
@@ -242,6 +216,28 @@ export const deleteBanner = async (bannerId, user) => {
   return true;
 };
 
+export const clearAllBanners = async (user) => {
+  saveStoredBanners([]);
+  if (isFirebaseConfigured) {
+    try {
+      const snap = await getDocs(collection(db, COLLECTIONS.BANNERS));
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, COLLECTIONS.BANNERS, d.id));
+      }
+    } catch (e) {
+      console.warn('Firestore clear banners failed:', e);
+    }
+  }
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.banners_clear',
+    COLLECTIONS.BANNERS,
+    'all',
+    'Cleared all homepage banners'
+  );
+  return true;
+};
+
 // ================= ANNOUNCEMENTS API =================
 
 export const getAllAnnouncements = async () => {
@@ -252,11 +248,7 @@ export const getAllAnnouncements = async () => {
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.ANNOUNCEMENTS));
     if (snap.empty) {
-      const local = getStoredAnnouncements();
-      for (const a of local) {
-        await setDoc(doc(db, COLLECTIONS.ANNOUNCEMENTS, a.id), { ...a, createdAt: serverTimestamp() });
-      }
-      return local;
+      return [];
     }
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (err) {
@@ -292,6 +284,12 @@ export const saveAnnouncement = async (data, user) => {
   if (isFirebaseConfigured) {
     try {
       await setDoc(doc(db, COLLECTIONS.ANNOUNCEMENTS, updated.id), { ...updated, updatedAt: serverTimestamp() });
+      await setDoc(doc(db, 'offerMessages', updated.id), {
+        text: updated.text,
+        order: updated.priority || 0,
+        createdAt: updated.createdAt,
+        updatedAt: serverTimestamp()
+      });
     } catch (e) {
       console.warn('Firestore announcement save failed:', e);
     }
@@ -308,6 +306,58 @@ export const saveAnnouncement = async (data, user) => {
   return updated;
 };
 
+export const deleteAnnouncement = async (announcementId, user) => {
+  const announcements = getStoredAnnouncements();
+  const existing = announcements.find(a => a.id === announcementId);
+  const filtered = announcements.filter(a => a.id !== announcementId);
+  saveStoredAnnouncements(filtered);
+
+  if (isFirebaseConfigured) {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.ANNOUNCEMENTS, announcementId));
+      await deleteDoc(doc(db, 'offerMessages', announcementId));
+    } catch (e) {
+      console.warn('Firestore announcement delete failed:', e);
+    }
+  }
+
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.announcement_delete',
+    COLLECTIONS.ANNOUNCEMENTS,
+    announcementId,
+    `Deleted announcement "${existing?.text || announcementId}"`
+  );
+
+  return true;
+};
+
+export const clearAllAnnouncements = async (user) => {
+  saveStoredAnnouncements([]);
+  if (isFirebaseConfigured) {
+    try {
+      const snap = await getDocs(collection(db, COLLECTIONS.ANNOUNCEMENTS));
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, COLLECTIONS.ANNOUNCEMENTS, d.id));
+      }
+      const offerSnap = await getDocs(collection(db, 'offerMessages'));
+      for (const d of offerSnap.docs) {
+        await deleteDoc(doc(db, 'offerMessages', d.id));
+      }
+    } catch (e) {
+      console.warn('Firestore clear announcements failed:', e);
+    }
+  }
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.announcements_clear',
+    COLLECTIONS.ANNOUNCEMENTS,
+    'all',
+    'Cleared all scrolling announcement bars'
+  );
+  return true;
+};
+
 // ================= CAMPAIGNS API =================
 
 export const getAllCampaigns = async () => {
@@ -318,11 +368,7 @@ export const getAllCampaigns = async () => {
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.CAMPAIGNS));
     if (snap.empty) {
-      const local = getStoredCampaigns();
-      for (const c of local) {
-        await setDoc(doc(db, COLLECTIONS.CAMPAIGNS, c.id), { ...c, createdAt: serverTimestamp() });
-      }
-      return local;
+      return [];
     }
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (err) {
@@ -333,7 +379,6 @@ export const getAllCampaigns = async () => {
 
 export const createAndSendCampaign = async (campaignData, user) => {
   const targetCount = campaignData.targetCount || 50;
-  // Authentic simulated communication provider delivery rates
   const sentCount = targetCount;
   const deliveredCount = Math.floor(targetCount * 0.95);
   const readCount = Math.floor(targetCount * 0.72);
@@ -376,6 +421,53 @@ export const createAndSendCampaign = async (campaignData, user) => {
   return newCampaign;
 };
 
+export const deleteCampaign = async (campaignId, user) => {
+  const campaigns = getStoredCampaigns();
+  const existing = campaigns.find(c => c.id === campaignId);
+  const filtered = campaigns.filter(c => c.id !== campaignId);
+  saveStoredCampaigns(filtered);
+
+  if (isFirebaseConfigured) {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.CAMPAIGNS, campaignId));
+    } catch (e) {
+      console.warn('Firestore campaign delete failed:', e);
+    }
+  }
+
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.campaign_delete',
+    COLLECTIONS.CAMPAIGNS,
+    campaignId,
+    `Deleted broadcast campaign "${existing?.title || campaignId}"`
+  );
+
+  return true;
+};
+
+export const clearAllCampaigns = async (user) => {
+  saveStoredCampaigns([]);
+  if (isFirebaseConfigured) {
+    try {
+      const snap = await getDocs(collection(db, COLLECTIONS.CAMPAIGNS));
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, COLLECTIONS.CAMPAIGNS, d.id));
+      }
+    } catch (e) {
+      console.warn('Firestore clear campaigns failed:', e);
+    }
+  }
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.campaigns_clear',
+    COLLECTIONS.CAMPAIGNS,
+    'all',
+    'Cleared all broadcast campaigns'
+  );
+  return true;
+};
+
 // ================= NOTIFICATION TEMPLATES API =================
 
 export const getNotificationTemplates = () => {
@@ -400,4 +492,33 @@ export const updateNotificationTemplate = async (templateId, updates, user) => {
   );
 
   return updated;
+};
+
+export const deleteNotificationTemplate = async (templateId, user) => {
+  const templates = getStoredTemplates();
+  const existing = templates.find(t => t.id === templateId);
+  const filtered = templates.filter(t => t.id !== templateId);
+  saveStoredTemplates(filtered);
+
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.template_delete',
+    COLLECTIONS.NOTIFICATION_TEMPLATES,
+    templateId,
+    `Deleted notification template "${existing?.name || templateId}"`
+  );
+
+  return true;
+};
+
+export const clearAllNotificationTemplates = async (user) => {
+  saveStoredTemplates([]);
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.templates_clear',
+    COLLECTIONS.NOTIFICATION_TEMPLATES,
+    'all',
+    'Cleared all notification templates'
+  );
+  return true;
 };

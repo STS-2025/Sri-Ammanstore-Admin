@@ -153,7 +153,7 @@ export const DeliveryAgentMobileView = ({
         </div>
 
         {/* Quick KPI Strip */}
-        <div className="grid grid-cols-4 gap-2 mt-4 pt-3 border-t border-slate-800 text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 pt-3 border-t border-slate-800 text-center">
           <div className="bg-slate-800/80 p-2 rounded-xl">
             <span className="text-[10px] text-slate-400 uppercase">Assigned</span>
             <p className="text-base font-bold text-white">{stops.length}</p>

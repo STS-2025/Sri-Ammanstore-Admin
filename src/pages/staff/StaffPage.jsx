@@ -11,23 +11,20 @@ import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { PERMISSIONS, PERMISSION_GROUPS } from '../../utils/permissions';
 import { ROLES, ROLE_DEFINITIONS } from '../../utils/roles';
-import { DEMO_USERS } from '../../firebase/authService';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { logActivity } from '../../firebase/auditLogger';
 import { ensureDeliveryAgentRegistered } from '../../firebase/deliveryService';
-
-const STAFF_LOCAL_KEY = 'grocery_admin_staff_list_v5';
+import {
+  getAllStaffProfiles,
+  createStaffAccount,
+  sendStaffPasswordReset,
+  updateStaffProfile,
+  deleteStaffProfile
+} from '../../firebase/authService';
 
 export const StaffPage = () => {
-  const [staffList, setStaffList] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STAFF_LOCAL_KEY);
-      return stored ? JSON.parse(stored) : Object.values(DEMO_USERS);
-    } catch (e) {
-      return Object.values(DEMO_USERS);
-    }
-  });
+  const [staffList, setStaffList] = useState([]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('ALL');
@@ -57,13 +54,25 @@ export const StaffPage = () => {
     role: ROLES.PACKING_STAFF,
     status: 'active'
   });
+  const [passwordForm, setPasswordForm] = useState({ password: '', confirmPassword: '' });
+  const [isSendingPasswordReset, setIsSendingPasswordReset] = useState(false);
 
   const notify = useNotification();
   const { userRole, currentUser } = usePermissions();
 
   useEffect(() => {
-    localStorage.setItem(STAFF_LOCAL_KEY, JSON.stringify(staffList));
-  }, [staffList]);
+    let isMounted = true;
+    getAllStaffProfiles()
+      .then((profiles) => {
+        if (isMounted) setStaffList(profiles);
+      })
+      .catch((error) => {
+        if (isMounted) notify.error('Failed to Load Staff', error.message);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const filteredStaff = staffList.filter((staff) => {
     if (selectedRoleFilter !== 'ALL' && staff.role !== selectedRoleFilter) return false;
@@ -137,7 +146,13 @@ export const StaffPage = () => {
       return s;
     });
 
-    setStaffList(updated);
+    try {
+      await updateStaffProfile(selectedStaffForDelegation.uid, { delegatedPermissions: newDelegations });
+      setStaffList(updated);
+    } catch (error) {
+      notify.error('Permission Delegation Failed', error.message);
+      return;
+    }
 
     await logActivity(
       currentUser || { id: 'admin', name: 'Super Admin' },
@@ -170,7 +185,13 @@ export const StaffPage = () => {
       return s;
     });
 
-    setStaffList(updated);
+    try {
+      await updateStaffProfile(selectedStaffForDelegation.uid, { delegatedPermissions: [] });
+      setStaffList(updated);
+    } catch (error) {
+      notify.error('Permission Revocation Failed', error.message);
+      return;
+    }
 
     await logActivity(
       currentUser || { id: 'admin', name: 'Super Admin' },
@@ -196,21 +217,32 @@ export const StaffPage = () => {
       return;
     }
 
+    if (!selectedStaffForEdit && passwordForm.password.length < 6) {
+      notify.error('Invalid Password', 'New password must be at least 6 characters.');
+      return;
+    }
+
+    if (!selectedStaffForEdit && passwordForm.password !== passwordForm.confirmPassword) {
+      notify.error('Password Mismatch', 'New Password and Confirm Password do not match.');
+      return;
+    }
+
     if (selectedStaffForEdit) {
-      // Edit existing
-      const updated = staffList.map(s => {
-        if (s.uid === selectedStaffForEdit.uid) {
-          return {
-            ...s,
-            displayName: formData.name,
-            phone: formData.phone,
-            role: formData.role,
-            status: formData.status
-          };
-        }
-        return s;
-      });
-      setStaffList(updated);
+      const updates = {
+        displayName: formData.name,
+        phone: formData.phone,
+        role: formData.role,
+        status: formData.status
+      };
+      try {
+        await updateStaffProfile(selectedStaffForEdit.uid, updates);
+      } catch (error) {
+        notify.error('Staff Update Failed', error.message);
+        return;
+      }
+      setStaffList((previous) => previous.map((staff) =>
+        staff.uid === selectedStaffForEdit.uid ? { ...staff, ...updates } : staff
+      ));
 
       await logActivity(
         currentUser || { id: 'admin', name: 'Super Admin' },
@@ -237,18 +269,20 @@ export const StaffPage = () => {
       setSelectedStaffForEdit(null);
     } else {
       // Create new
-      const newStaff = {
-        uid: `staff-${Date.now()}`,
-        displayName: formData.name,
-        email: formData.email,
-        phone: formData.phone || '+91 94440 00000',
-        role: formData.role,
-        status: 'active',
-        createdAt: new Date().toISOString(),
-        delegatedPermissions: []
-      };
-
-      setStaffList(prev => [newStaff, ...prev]);
+      let newStaff;
+      try {
+        newStaff = await createStaffAccount({
+          email: formData.email,
+          password: passwordForm.password,
+          displayName: formData.name,
+          phone: formData.phone || '+91 94440 00000',
+          role: formData.role
+        });
+      } catch (error) {
+        notify.error('Staff Account Creation Failed', error.message);
+        return;
+      }
+      setStaffList((previous) => [newStaff, ...previous]);
 
       // If role is delivery_agent, auto-sync into fleet dispatch roster
       if (formData.role === ROLES.DELIVERY_AGENT) {
@@ -267,6 +301,20 @@ export const StaffPage = () => {
       notify.success('Account Created', `${newStaff.displayName} registered as ${ROLE_DEFINITIONS[newStaff.role]?.name}.`);
       setIsAddModalOpen(false);
       setFormData({ name: '', email: '', phone: '', role: ROLES.PACKING_STAFF, status: 'active' });
+      setPasswordForm({ password: '', confirmPassword: '' });
+    }
+  };
+
+  const handleSendPasswordReset = async () => {
+    if (!selectedStaffForEdit?.email) return;
+    setIsSendingPasswordReset(true);
+    try {
+      await sendStaffPasswordReset(selectedStaffForEdit.email);
+      notify.success('Password Reset Sent', `A password reset link was sent to ${selectedStaffForEdit.email}.`);
+    } catch (error) {
+      notify.error('Password Reset Failed', error.message);
+    } finally {
+      setIsSendingPasswordReset(false);
     }
   };
 
@@ -296,8 +344,15 @@ export const StaffPage = () => {
     if (!confirmConfig) return;
 
     if (confirmConfig.type === 'toggle_status') {
-      const updated = staffList.map(s => s.uid === confirmConfig.staff.uid ? { ...s, status: confirmConfig.nextStatus } : s);
-      setStaffList(updated);
+      try {
+        await updateStaffProfile(confirmConfig.staff.uid, { status: confirmConfig.nextStatus });
+      } catch (error) {
+        notify.error('Status Update Failed', error.message);
+        return;
+      }
+      setStaffList((previous) => previous.map((staff) =>
+        staff.uid === confirmConfig.staff.uid ? { ...staff, status: confirmConfig.nextStatus } : staff
+      ));
 
       await logActivity(
         currentUser || { id: 'admin', name: 'Super Admin' },
@@ -309,8 +364,13 @@ export const StaffPage = () => {
 
       notify.success('Status Changed', `Staff account is now ${confirmConfig.nextStatus}.`);
     } else if (confirmConfig.type === 'delete') {
-      const filtered = staffList.filter(s => s.uid !== confirmConfig.staff.uid);
-      setStaffList(filtered);
+      try {
+        await deleteStaffProfile(confirmConfig.staff.uid);
+      } catch (error) {
+        notify.error('Staff Deletion Failed', error.message);
+        return;
+      }
+      setStaffList((previous) => previous.filter((staff) => staff.uid !== confirmConfig.staff.uid));
 
       await logActivity(
         currentUser || { id: 'admin', name: 'Super Admin' },
@@ -477,6 +537,7 @@ export const StaffPage = () => {
             onClick={() => {
               setSelectedStaffForEdit(null);
               setFormData({ name: '', email: '', phone: '', role: ROLES.PACKING_STAFF, status: 'active' });
+              setPasswordForm({ password: '', confirmPassword: '' });
               setIsAddModalOpen(true);
             }}
             className="btn-primary text-xs"
@@ -652,6 +713,7 @@ export const StaffPage = () => {
           setIsAddModalOpen(false);
           setIsEditModalOpen(false);
           setSelectedStaffForEdit(null);
+          setPasswordForm({ password: '', confirmPassword: '' });
         }}
         title={selectedStaffForEdit ? 'Edit Staff Member' : 'Provision New Staff Member'}
         subtitle="Configure role credentials and operational authorizations."
@@ -713,18 +775,61 @@ export const StaffPage = () => {
             </p>
           </div>
 
+          {!selectedStaffForEdit && (
+            <>
+              <div>
+                <label className="input-label">New Password *</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                  value={passwordForm.password}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, password: e.target.value })}
+                  placeholder="At least 6 characters"
+                  className="input-text text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="input-label">Confirm Password *</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                  value={passwordForm.confirmPassword}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                  placeholder="Re-enter the password"
+                  className="input-text text-xs"
+                />
+              </div>
+            </>
+          )}
+
           {selectedStaffForEdit && (
-            <div>
-              <label className="input-label">Account Status</label>
-              <select
-                value={formData.status}
-                onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                className="input-text text-xs"
+            <>
+              <div>
+                <label className="input-label">Account Status</label>
+                <select
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  className="input-text text-xs"
+                >
+                  <option value="active">Active (Full Access)</option>
+                  <option value="disabled">Disabled (Revoked Access)</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSendPasswordReset}
+                disabled={isSendingPasswordReset}
+                className="btn-secondary text-xs"
               >
-                <option value="active">Active (Full Access)</option>
-                <option value="disabled">Disabled (Revoked Access)</option>
-              </select>
-            </div>
+                {isSendingPasswordReset ? 'Sending Reset Link...' : 'Reset Password'}
+              </button>
+            </>
           )}
         </form>
       </FormModal>

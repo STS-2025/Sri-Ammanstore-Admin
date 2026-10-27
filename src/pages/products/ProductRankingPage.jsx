@@ -19,15 +19,129 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { getAllProducts, updateProduct } from '../../firebase/productService';
+import { getAllOrders } from '../../firebase/orderService';
 import { formatCurrency } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
+
+const normalizeMatchKey = (value) => String(value || '').trim().toLowerCase();
+
+const getProductViews = (product) => {
+  const value = Number(
+    product.views ??
+    product.viewCount ??
+    product.viewsCount ??
+    product.totalViews ??
+    product.analytics?.views ??
+    0
+  );
+  return Number.isFinite(value) && value > 0 ? value : 0;
+};
+
+const getValidDate = (value) => {
+  const date = typeof value?.toDate === 'function'
+    ? value.toDate()
+    : value instanceof Date
+      ? value
+      : value
+        ? new Date(value)
+        : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+};
+
+const buildProductMetrics = (products, orders) => {
+  const metrics = new Map(products.map((product) => [
+    product.id,
+    {
+      unitsSold: 0,
+      orderCount: 0,
+      purchaseOrderCount: 0,
+      cancelledOrderCount: 0,
+      returnedOrderCount: 0
+    }
+  ]));
+  const productLookup = new Map();
+
+  products.forEach((product) => {
+    const productKeys = [
+      product.id,
+      product.productId,
+      product.productID,
+      product.name,
+      product.tamilName,
+      ...(product.variants || []).flatMap((variant) => [
+        variant.id,
+        variant.sku,
+        variant.barcode
+      ])
+    ];
+    productKeys.forEach((key) => {
+      const normalizedKey = normalizeMatchKey(key);
+      if (normalizedKey) productLookup.set(normalizedKey, product.id);
+    });
+  });
+
+  orders.forEach((order) => {
+    const status = normalizeMatchKey(order.status).replace(/[\s-]+/g, '_');
+    const isCancelled = status.includes('cancel');
+    const isReturned = status.includes('return');
+    const isCountedSale = !isCancelled && !isReturned;
+    const matchedProductIds = new Set();
+    const matchedItems = [];
+
+    (order.items || []).forEach((item) => {
+      const productId = [
+        item.productId,
+        item.productID,
+        item.product_id,
+        item.product?.id,
+        item.variant?.id,
+        item.variantId,
+        item.variantID,
+        item.variant?.sku,
+        item.sku,
+        item.barcode,
+        item.productName,
+        item.name,
+        item.title
+      ]
+        .map(normalizeMatchKey)
+        .map((key) => productLookup.get(key))
+        .find(Boolean);
+
+      if (!productId || !metrics.has(productId)) return;
+      matchedProductIds.add(productId);
+      matchedItems.push({ productId, item });
+    });
+
+    matchedProductIds.forEach((productId) => {
+      const productMetric = metrics.get(productId);
+      productMetric.orderCount += 1;
+      if (isCountedSale) productMetric.purchaseOrderCount += 1;
+      if (isCancelled) productMetric.cancelledOrderCount += 1;
+      if (isReturned) productMetric.returnedOrderCount += 1;
+    });
+
+    if (isCountedSale) {
+      matchedItems.forEach(({ productId, item }) => {
+        const quantity = Number(item.quantity ?? item.qty ?? 1);
+        if (Number.isFinite(quantity)) {
+          if (item.pickStatus !== 'unavailable') {
+            metrics.get(productId).unitsSold += Math.max(0, quantity);
+          }
+        }
+      });
+    }
+  });
+
+  return metrics;
+};
 
 const RANKING_TABS = [
   {
     id: 'top_100',
     title: '1. Top 100 Selling',
-    description: 'Highest sales volume & revenue leaders',
+    description: 'Highest delivered product units sold',
     icon: Flame,
     badge: 'Popularity',
     activeBorder: 'border-rose-500 ring-2 ring-rose-500/20 bg-rose-50/40',
@@ -38,7 +152,7 @@ const RANKING_TABS = [
   {
     id: 'most_viewed',
     title: '2. Most Viewed Products',
-    description: 'Highest customer app views & traffic',
+    description: 'Products with recorded view counts',
     icon: Eye,
     badge: 'App Traffic',
     activeBorder: 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/40',
@@ -49,7 +163,7 @@ const RANKING_TABS = [
   {
     id: 'most_purchased',
     title: '3. Most Purchased',
-    description: 'Frequent repeat basket favorites',
+    description: 'Highest number of delivered orders',
     icon: ShoppingBag,
     badge: 'Orders',
     activeBorder: 'border-emerald-600 ring-2 ring-emerald-600/20 bg-emerald-50/40',
@@ -116,7 +230,6 @@ const RANKING_TABS = [
 
 export const ProductRankingPage = () => {
   const [activeTab, setActiveTab] = useState('top_100');
-  const [products, setProducts] = useState([]);
   const [rankedList, setRankedList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -128,10 +241,24 @@ export const ProductRankingPage = () => {
   useEffect(() => {
     const fetchAndRank = async () => {
       setLoading(true);
-      const all = await getAllProducts();
-      setProducts(all);
-      applyRankingFilter(all, activeTab);
-      setLoading(false);
+      try {
+        const [allProducts, orders] = await Promise.all([
+          getAllProducts(),
+          getAllOrders()
+        ]);
+        const productMetrics = buildProductMetrics(allProducts, orders);
+        const productsWithMetrics = allProducts.map((product) => ({
+          ...product,
+          views: getProductViews(product),
+          performance: productMetrics.get(product.id)
+        }));
+        applyRankingFilter(productsWithMetrics, activeTab);
+      } catch (err) {
+        notify.error('Failed to load product rankings', err.message);
+        setRankedList([]);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchAndRank();
   }, [activeTab]);
@@ -141,29 +268,29 @@ export const ProductRankingPage = () => {
 
     switch (tab) {
       case 'top_100':
-        // Top 100 Selling Products
-        filtered.sort((a, b) => (b.rankingScore || 0) - (a.rankingScore || 0));
+        filtered.sort((a, b) => b.performance.unitsSold - a.performance.unitsSold);
         filtered = filtered.slice(0, 100);
         break;
 
       case 'most_viewed':
-        // Most Viewed Products
-        filtered.sort((a, b) => ((b.views || b.rankingScore * 25 || 0) - (a.views || a.rankingScore * 25 || 0)));
+        filtered.sort((a, b) => Number(b.views) - Number(a.views));
         break;
 
       case 'most_purchased':
-        // Most Purchased Products
-        filtered.sort((a, b) => ((b.purchaseCount || b.rankingScore * 3 || 0) - (a.purchaseCount || a.rankingScore * 3 || 0)));
+        filtered.sort((a, b) =>
+          b.performance.purchaseOrderCount - a.performance.purchaseOrderCount
+        );
         break;
 
       case 'recently_added':
-        // Recently Added Products
-        filtered.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        filtered.sort((a, b) =>
+          (getValidDate(b.createdAt)?.getTime() || 0) -
+          (getValidDate(a.createdAt)?.getTime() || 0)
+        );
         break;
 
       case 'featured':
-        // Featured Products
-        filtered = filtered.filter((p) => p.isFeatured || p.rankingScore >= 85);
+        filtered = filtered.filter((product) => product.isFeatured);
         break;
 
       case 'offers':
@@ -179,12 +306,18 @@ export const ProductRankingPage = () => {
         break;
 
       case 'high_return_cancel':
-        // Products with High Return / Cancellation Rate
-        filtered.sort((a, b) => (b.returnRate || 0) - (a.returnRate || 0));
+        filtered = filtered.filter((product) => product.performance.orderCount > 0);
+        filtered.sort((a, b) => {
+          const aRisk = (a.performance.cancelledOrderCount + a.performance.returnedOrderCount) /
+            a.performance.orderCount;
+          const bRisk = (b.performance.cancelledOrderCount + b.performance.returnedOrderCount) /
+            b.performance.orderCount;
+          return bRisk - aRisk;
+        });
         break;
 
       default:
-        filtered.sort((a, b) => (b.rankingScore || 0) - (a.rankingScore || 0));
+        filtered.sort((a, b) => b.performance.unitsSold - a.performance.unitsSold);
         break;
     }
 
@@ -333,7 +466,9 @@ export const ProductRankingPage = () => {
           <div className="p-8 text-center text-slate-400 text-xs">Loading section data...</div>
         ) : displayedList.length === 0 ? (
           <div className="p-8 text-center text-slate-400 text-xs">
-            No products found in this section matching your search.
+            {activeTab === 'high_return_cancel'
+                ? 'No product order history is available to calculate return or cancellation rates.'
+                : 'No products found in this section matching your search.'}
           </div>
         ) : (
           displayedList.map((product, index) => {
@@ -399,25 +534,25 @@ export const ProductRankingPage = () => {
                   <div className="text-right">
                     {activeTab === 'top_100' && (
                       <span className="text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1 rounded-full border border-rose-200">
-                        🔥 Top #{index + 1} Seller
+                        🔥 {product.performance.unitsSold.toLocaleString()} Units Sold
                       </span>
                     )}
 
                     {activeTab === 'most_viewed' && (
                       <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200 font-mono">
-                        👁️ {((product.rankingScore || 80) * 24).toLocaleString()} Views
+                        👁️ {Number(product.views).toLocaleString()} Views
                       </span>
                     )}
 
                     {activeTab === 'most_purchased' && (
                       <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 font-mono">
-                        🛍️ {((product.rankingScore || 80) * 3).toLocaleString()} Orders
+                        🛍️ {product.performance.purchaseOrderCount.toLocaleString()} Orders
                       </span>
                     )}
 
                     {activeTab === 'recently_added' && (
                       <span className="text-xs font-semibold text-purple-700 bg-purple-50 px-3 py-1 rounded-full border border-purple-200">
-                        ✨ {new Date(product.createdAt || Date.now()).toLocaleDateString()}
+                        ✨ {getValidDate(product.createdAt)?.toLocaleDateString() || 'Date unavailable'}
                       </span>
                     )}
 
@@ -441,7 +576,11 @@ export const ProductRankingPage = () => {
 
                     {activeTab === 'high_return_cancel' && (
                       <span className="text-xs font-bold text-rose-700 bg-rose-50 px-3 py-1 rounded-full border border-rose-200 font-mono">
-                        🚨 Risk Rate: 4.8%
+                        🚨 Risk Rate: {Math.round(
+                          ((product.performance.cancelledOrderCount + product.performance.returnedOrderCount) /
+                            product.performance.orderCount) * 100
+                        )}% ({product.performance.cancelledOrderCount + product.performance.returnedOrderCount}/
+                        {product.performance.orderCount} orders)
                       </span>
                     )}
                   </div>

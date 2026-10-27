@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Settings, Store, Clock, IndianRupee, Coins, ShieldCheck, Save, 
-  AlertTriangle, Truck, Bell, Download, RefreshCw, KeyRound, CheckCircle2
+  AlertTriangle, Truck, Bell, Download, RefreshCw, KeyRound, CheckCircle2, Trash2, Barcode as BarcodeIcon
 } from 'lucide-react';
+import { PosSettingsSection } from '../../components/pos/PosSettingsSection';
 import { PageHeader } from '../../components/common/PageHeader';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
@@ -10,6 +11,11 @@ import { PERMISSIONS } from '../../utils/permissions';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { logActivity } from '../../firebase/auditLogger';
+import { seedFirestoreIfEmpty, clearAllFirestoreData } from '../../firebase/seedFirestore';
+import { isFirebaseConfigured, db } from '../../firebase/config';
+import { COLLECTIONS } from '../../firebase/collections';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { createProductExcelTemplate } from '../../utils/productExcel';
 
 const SETTINGS_LOCAL_KEY = 'grocery_admin_business_settings_v5';
 
@@ -31,6 +37,7 @@ export const SettingsPage = () => {
       storeAddress: '142, Cross Cut Road, Gandhipuram, Coimbatore - 641012, Tamil Nadu',
       gstin: '33AAAAA0000A1Z5',
       fssaiLicense: '12423002000456',
+      upiId: '',
       currency: 'INR (₹)',
       invoicePrefix: 'SAS-INV-',
       invoiceFooterNote: 'Thank you for shopping at Sri Amman Store! Fresh spices & traditional groceries delivered with love.',
@@ -73,6 +80,26 @@ export const SettingsPage = () => {
     };
   });
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadCloudSettings = async () => {
+      if (!isFirebaseConfigured) return;
+      try {
+        const settingsSnapshot = await getDoc(doc(db, COLLECTIONS.BUSINESS_SETTINGS, 'businessSettings'));
+        if (!cancelled && settingsSnapshot.exists()) {
+          const cloudSettings = settingsSnapshot.data();
+          setSettings((currentSettings) => ({ ...currentSettings, ...cloudSettings }));
+          const localSettings = JSON.parse(localStorage.getItem(SETTINGS_LOCAL_KEY) || '{}');
+          localStorage.setItem(SETTINGS_LOCAL_KEY, JSON.stringify({ ...localSettings, ...cloudSettings }));
+        }
+      } catch (error) {
+        console.warn('[SettingsPage] Could not load cloud settings:', error);
+      }
+    };
+    loadCloudSettings();
+    return () => { cancelled = true; };
+  }, []);
+
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const notify = useNotification();
   const { userRole, currentUser, can } = usePermissions();
@@ -85,6 +112,12 @@ export const SettingsPage = () => {
   const handleConfirmSave = async ({ reason }) => {
     try {
       localStorage.setItem(SETTINGS_LOCAL_KEY, JSON.stringify(settings));
+      if (isFirebaseConfigured) {
+        await setDoc(doc(db, COLLECTIONS.BUSINESS_SETTINGS, 'businessSettings'), {
+          ...settings,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
 
       await logActivity(
         currentUser || { id: 'admin', name: 'Super Admin' },
@@ -102,6 +135,52 @@ export const SettingsPage = () => {
     }
   };
 
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncToFirebase = async () => {
+    setSyncing(true);
+    try {
+      const res = await seedFirestoreIfEmpty(true);
+      if (res?.success) {
+        notify.success(
+          'Firebase Live Sync Complete',
+          `Successfully migrated and synced ${res.totalUploaded} records to Firebase Firestore!`
+        );
+      } else {
+        notify.error('Sync Failed', res?.reason || res?.error || 'Could not sync to Firebase');
+      }
+    } catch (err) {
+      notify.error('Sync Error', err.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const [purging, setPurging] = useState(false);
+
+  const handlePurgeDummyData = async () => {
+    if (!window.confirm('Are you sure you want to delete all demo/dummy data from Firestore and LocalStorage? This will leave your database clean for real store items.')) {
+      return;
+    }
+    setPurging(true);
+    try {
+      const res = await clearAllFirestoreData();
+      if (res?.success) {
+        notify.success(
+          'Database Wiped Clean',
+          `Successfully deleted ${res.count} demo documents across Firestore and cleared local storage!`
+        );
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      }
+    } catch (err) {
+      notify.error('Purge Failed', err.message);
+    } finally {
+      setPurging(false);
+    }
+  };
+
   const handleExportFullBackup = () => {
     const fullBackup = {
       timestamp: new Date().toISOString(),
@@ -115,6 +194,15 @@ export const SettingsPage = () => {
     link.href = URL.createObjectURL(blob);
     link.download = `sri_amman_store_system_backup_${new Date().toISOString().slice(0, 10)}.json`;
     link.click();
+  };
+
+  const handleDownloadProductTemplate = () => {
+    const blob = new Blob([createProductExcelTemplate()], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'sri-amman-product-import-template.xls';
+    link.click();
+    URL.revokeObjectURL(link.href);
   };
 
   return (
@@ -142,6 +230,7 @@ export const SettingsPage = () => {
       <div className="bg-white p-1 rounded-2xl border border-slate-200 flex flex-wrap gap-1 shadow-xs">
         {[
           { id: 'business', label: 'Store Profile & Legal', icon: Store },
+          { id: 'pos', label: 'Customer ID & POS Settings', icon: BarcodeIcon },
           { id: 'orders', label: 'Orders & Cart Rules', icon: IndianRupee },
           { id: 'delivery', label: 'Delivery & Fleet Zones', icon: Truck },
           { id: 'notifications', label: 'Communication Gateways', icon: Bell },
@@ -166,6 +255,8 @@ export const SettingsPage = () => {
           );
         })}
       </div>
+
+      {activeSection === 'pos' && <PosSettingsSection />}
 
       {/* Main Settings Form */}
       <form onSubmit={handleSaveClick} className="space-y-6">
@@ -216,6 +307,18 @@ export const SettingsPage = () => {
                   onChange={(e) => setSettings({ ...settings, storeEmail: e.target.value })}
                   className="input-text text-xs"
                 />
+              </div>
+
+              <div>
+                <label className="input-label">UPI ID for POS Payments</label>
+                <input
+                  type="text"
+                  value={settings.upiId || ''}
+                  onChange={(e) => setSettings({ ...settings, upiId: e.target.value.trim() })}
+                  placeholder="example@upi"
+                  className="input-text text-xs font-mono"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">Used to generate amount-specific UPI QR codes at checkout.</p>
               </div>
 
               <div>
@@ -515,6 +618,21 @@ export const SettingsPage = () => {
             </div>
 
             <div className="space-y-4">
+              <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-xl flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900">Product Excel Import Format</h4>
+                  <p className="text-[11px] text-slate-600 mt-0.5">The yellow example row is skipped during import. Use Category Name and Brand Name from the product form, fill one row per pack, and assign a ProductID to match optional images named ProductID-front and ProductID-back.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadProductTemplate}
+                  className="px-3.5 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shrink-0"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Excel Format
+                </button>
+              </div>
+
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
                 <div>
                   <h4 className="text-xs font-bold text-slate-900">Firebase App Check Attestation</h4>
@@ -523,6 +641,47 @@ export const SettingsPage = () => {
                 <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
                   Enforced
                 </span>
+              </div>
+
+              <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-slate-900">Firebase Firestore Live Database Migration & Sync</h4>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white uppercase">
+                      {isFirebaseConfigured ? 'Connected' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Push all local store items, orders, customers, delivery agents, categories, and promo codes directly into your live Firebase Firestore database.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSyncToFirebase}
+                  disabled={syncing || !isFirebaseConfigured}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
+                >
+                  <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                  <span>{syncing ? 'Syncing to Firebase...' : 'Sync All Data to Firebase'}</span>
+                </button>
+              </div>
+
+              <div className="p-4 bg-rose-50/60 border border-rose-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-rose-900">Purge & Clear All Dummy / Demo Data</h4>
+                  <p className="text-[11px] text-rose-700 mt-0.5">
+                    Wipe out pre-populated sample products, orders, customers, and delivery agents from Firestore & LocalStorage so your database is 100% clean for live store entry.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handlePurgeDummyData}
+                  disabled={purging}
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
+                >
+                  <Trash2 className={`w-4 h-4 ${purging ? 'animate-spin' : ''}`} />
+                  <span>{purging ? 'Clearing Database...' : 'Clear All Dummy Data'}</span>
+                </button>
               </div>
 
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">

@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   XCircle,
   PackageCheck,
+  CircleDollarSign,
   AlertTriangle,
   RotateCcw,
   IndianRupee,
@@ -28,7 +29,10 @@ export const OrderDetailModal = ({
   onClose,
   order,
   onOrderUpdated,
-  onOpenPrint
+  onOpenPrint,
+  isManualOrder = false,
+  onToggleManualPayment,
+  isManualPaymentUpdating = false
 }) => {
   const [statusReason, setStatusReason] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -66,8 +70,13 @@ export const OrderDetailModal = ({
                 <h3 className="text-base font-bold font-mono text-slate-900">
                   {order.orderNumber}
                 </h3>
-                <StatusBadge status={order.status} />
-                {order.priority === 'Express' && (
+                {isManualOrder ? (
+                  <StatusBadge
+                    status={String(order.paymentStatus || '').toLowerCase() === 'paid' ? 'paid' : 'draft'}
+                    label={String(order.paymentStatus || '').toLowerCase() === 'paid' ? 'Paid' : 'Un Paid'}
+                  />
+                ) : <StatusBadge status={order.status} />}
+                {!isManualOrder && order.priority === 'Express' && (
                   <span className="text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full border border-rose-200">
                     Express Dispatch
                   </span>
@@ -80,6 +89,21 @@ export const OrderDetailModal = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {isManualOrder && onToggleManualPayment && (
+              <button
+                type="button"
+                disabled={isManualPaymentUpdating}
+                onClick={() => onToggleManualPayment(order)}
+                className="btn-secondary text-xs py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <CircleDollarSign className="w-3.5 h-3.5" />
+                <span>
+                  {String(order.paymentStatus || '').toLowerCase() === 'paid'
+                    ? 'Mark Un Paid'
+                    : 'Mark Paid'}
+                </span>
+              </button>
+            )}
             {onOpenPrint && (
               <button
                 onClick={() => onOpenPrint(order)}
@@ -101,12 +125,13 @@ export const OrderDetailModal = ({
         {/* Modal Scroll Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* Order Lifecycle Visual Timeline (Section 9) */}
-          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+          {!isManualOrder && <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
             <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-2">
               Order Lifecycle Stage Progression
             </span>
             <OrderTimeline currentStatus={order.status} history={order.timeline || []} />
           </div>
+          }
 
           {/* Grid: Customer Info & Payment Breakdown */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -114,7 +139,7 @@ export const OrderDetailModal = ({
             <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-3 shadow-subtle text-xs">
               <div className="flex items-center gap-2 font-bold text-slate-900 border-b pb-2">
                 <User className="w-4 h-4 text-emerald-700" />
-                <span>Customer & Delivery Destination</span>
+                <span>{isManualOrder ? 'Customer & Counter Sale' : 'Customer & Delivery Destination'}</span>
               </div>
 
               <div>
@@ -128,19 +153,25 @@ export const OrderDetailModal = ({
                 </div>
               </div>
 
-              <div className="flex items-start gap-2 text-slate-600 pt-1 border-t border-slate-100">
+              {!isManualOrder && <div className="flex items-start gap-2 text-slate-600 pt-1 border-t border-slate-100">
                 <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
                 <p className="leading-relaxed">
                   {order.deliveryAddress?.addressLine},<br />
                   Landmark: {order.deliveryAddress?.landmark}<br />
                   Locality: <strong>{order.deliveryAddress?.locality}</strong> (PIN: {order.deliveryAddress?.pincode})
                 </p>
-              </div>
+              </div>}
 
-              <div className="p-2.5 bg-slate-50 rounded-lg text-slate-500 font-mono text-[11px] flex justify-between">
-                <span>Slot: {order.deliverySlot}</span>
-                <span>Distance: ~{order.distanceKm} km</span>
-              </div>
+              {isManualOrder ? (
+                <div className="p-2.5 bg-emerald-50 rounded-lg text-emerald-800 font-mono text-[11px]">
+                  Counter POS sale
+                </div>
+              ) : (
+                <div className="p-2.5 bg-slate-50 rounded-lg text-slate-500 font-mono text-[11px] flex justify-between">
+                  <span>Slot: {order.deliverySlot}</span>
+                  <span>Distance: ~{order.distanceKm} km</span>
+                </div>
+              )}
             </div>
 
             {/* Financial Summary & Payment */}
@@ -177,8 +208,10 @@ export const OrderDetailModal = ({
 
               <div className="p-2.5 bg-slate-50 rounded-lg text-[11px] flex items-center justify-between">
                 <span className="font-semibold text-slate-700">Payment: {order.paymentMethod}</span>
-                <span className={`font-bold uppercase ${order.paymentStatus === 'paid' ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {order.paymentStatus}
+                <span className={`font-bold uppercase ${String(order.paymentStatus || '').toLowerCase() === 'paid' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {isManualOrder
+                    ? String(order.paymentStatus || '').toLowerCase() === 'paid' ? 'Paid' : 'Un Paid'
+                    : order.paymentStatus}
                 </span>
               </div>
             </div>
@@ -199,7 +232,7 @@ export const OrderDetailModal = ({
                     <th className="py-2.5 px-3 text-right">Price</th>
                     <th className="py-2.5 px-3 text-center">Qty</th>
                     <th className="py-2.5 px-3 text-right">Total</th>
-                    <th className="py-2.5 px-3 text-center">Pick Status</th>
+                    {!isManualOrder && <th className="py-2.5 px-3 text-center">Pick Status</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -215,7 +248,7 @@ export const OrderDetailModal = ({
                       <td className="py-2.5 px-3 text-right font-mono">{formatCurrency(item.unitPrice)}</td>
                       <td className="py-2.5 px-3 text-center font-mono font-bold">{item.quantity}</td>
                       <td className="py-2.5 px-3 text-right font-mono font-semibold">{formatCurrency(item.totalPrice)}</td>
-                      <td className="py-2.5 px-3 text-center">
+                      {!isManualOrder && <td className="py-2.5 px-3 text-center">
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                             item.pickStatus === 'packed'
@@ -229,7 +262,7 @@ export const OrderDetailModal = ({
                         >
                           {item.pickStatus}
                         </span>
-                      </td>
+                      </td>}
                     </tr>
                   ))}
                 </tbody>
@@ -238,7 +271,7 @@ export const OrderDetailModal = ({
           </div>
 
           {/* Operational Status Advance Actions */}
-          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+          {!isManualOrder && <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
               Operational Status Transitions
             </span>
@@ -310,7 +343,7 @@ export const OrderDetailModal = ({
                 </button>
               )}
             </div>
-          </div>
+          </div>}
         </div>
       </div>
     </div>

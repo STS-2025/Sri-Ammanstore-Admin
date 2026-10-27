@@ -112,7 +112,7 @@ export const DataTable = ({
 
       {/* Main Table Container with responsive horizontal scroll */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="w-full min-w-max text-left border-collapse">
           <thead className={stickyHeader ? 'sticky top-0 z-10' : ''}>
             <tr className="bg-slate-50/90 backdrop-blur-sm border-b border-slate-200 text-slate-600 text-xs font-semibold tracking-wider uppercase">
               {selectable && (

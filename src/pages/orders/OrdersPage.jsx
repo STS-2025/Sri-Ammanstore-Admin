@@ -15,7 +15,8 @@ import {
   Calendar,
   IndianRupee,
   Layers,
-  Plus
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { DataTable } from '../../components/table/DataTable';
@@ -25,7 +26,7 @@ import { PackingWorkstationModal } from '../../components/orders/PackingWorkstat
 import { PrintableDocumentsModal } from '../../components/orders/PrintableDocumentsModal';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { PERMISSIONS } from '../../utils/permissions';
-import { getAllOrders, updateOrderStatus, createDemoOrder } from '../../firebase/orderService';
+import { getAllOrders, updateOrderStatus, deleteOrder, clearAllOrdersAndResetSequence } from '../../firebase/orderService';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -68,6 +69,7 @@ export const OrdersPage = () => {
   }, []);
 
   const filteredOrders = orders.filter((ord) => {
+    if (ord.orderSource === 'manual') return false;
     if (statusFilter !== 'ALL' && ord.status !== statusFilter) return false;
     if (paymentFilter !== 'ALL' && ord.paymentMethod !== paymentFilter) return false;
     if (priorityFilter !== 'ALL' && ord.priority !== priorityFilter) return false;
@@ -83,13 +85,25 @@ export const OrdersPage = () => {
     );
   });
 
-  const handleCreateDemoOrder = async () => {
+  const handleDeleteOrder = async (orderId) => {
+    if (!window.confirm('Are you sure you want to delete this order record?')) return;
     try {
-      const newOrd = await createDemoOrder(currentUser);
-      notify.success('Packed Order Created', `${newOrd.orderNumber} is now ready for Delivery Manager dispatch!`);
+      await deleteOrder(orderId, currentUser);
+      notify.success('Order Deleted', 'Order record has been removed.');
       loadData();
     } catch (err) {
-      notify.error('Failed to create order', err.message);
+      notify.error('Failed to delete order', err.message);
+    }
+  };
+
+  const handleClearDemoOrders = async () => {
+    if (!window.confirm('Are you sure you want to clear ALL test orders and reset the Order ID counter back to 0 (so the next order will be ORD-0000001)?')) return;
+    try {
+      await clearAllOrdersAndResetSequence(currentUser);
+      notify.success('Orders Cleared & Reset', 'All test orders removed and Order ID counter reset to start from ORD-0000001.');
+      loadData();
+    } catch (err) {
+      notify.error('Failed to clear orders', err.message);
     }
   };
 
@@ -218,6 +232,14 @@ export const OrdersPage = () => {
               <Printer className="w-3.5 h-3.5" />
             </button>
           </PermissionGuard>
+
+          <button
+            onClick={() => handleDeleteOrder(row.id)}
+            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+            title="Delete Order"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
         </div>
       )
     }
@@ -230,13 +252,16 @@ export const OrdersPage = () => {
         subtitle="Manage end-to-end order processing, picking workstation checklists, parcel printing, and customer deliveries."
         actions={
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleCreateDemoOrder}
-              className="btn-primary text-xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-medium shadow-sm transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ Create Packed Order</span>
-            </button>
+            {orders.some(o => o.id.startsWith('ord-demo-') || o.orderNumber?.startsWith('ORD-984')) && (
+              <button
+                onClick={handleClearDemoOrders}
+                className="px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Clear Test Orders</span>
+              </button>
+            )}
+
             <button
               onClick={() => handleOpenPrint(null, 'manifest')}
               className="btn-secondary text-xs"
@@ -244,12 +269,21 @@ export const OrdersPage = () => {
               <Truck className="w-3.5 h-3.5" />
               <span>Print Batch Manifest</span>
             </button>
+
             <button
               onClick={() => handleOpenPrint(null, 'cod_sheet')}
               className="btn-secondary text-xs"
             >
               <IndianRupee className="w-3.5 h-3.5" />
               <span>Print COD Cash Sheet</span>
+            </button>
+
+            <button
+              onClick={loadData}
+              className="p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-white border border-slate-200 transition-colors"
+              title="Refresh Orders"
+            >
+              <RefreshCw className="w-4 h-4" />
             </button>
           </div>
         }

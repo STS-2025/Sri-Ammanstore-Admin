@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, getDoc, setDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, getDoc, setDoc, updateDoc, addDoc, deleteDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './config';
 import { COLLECTIONS } from './collections';
 import { INITIAL_DELIVERY_AGENTS, INITIAL_DELIVERY_BATCHES } from '../data/deliveryAndMarketingSeedData';
@@ -12,12 +12,11 @@ const getStoredAgents = () => {
   try {
     const raw = localStorage.getItem(AGENTS_STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(INITIAL_DELIVERY_AGENTS));
-      return INITIAL_DELIVERY_AGENTS;
+      return [];
     }
     return JSON.parse(raw);
   } catch (e) {
-    return INITIAL_DELIVERY_AGENTS;
+    return [];
   }
 };
 
@@ -33,30 +32,12 @@ const getStoredBatches = () => {
   try {
     const raw = localStorage.getItem(BATCHES_STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(BATCHES_STORAGE_KEY, JSON.stringify(INITIAL_DELIVERY_BATCHES));
-      return INITIAL_DELIVERY_BATCHES;
+      return [];
     }
     const batches = JSON.parse(raw);
-    // Sanity filter: Clean out pre-seeded ORD-9842 from batch-cbe-01 so packed ORD-9842 is dispatchable
-    let cleaned = false;
-    batches.forEach(b => {
-      if (b.id === 'batch-cbe-01') {
-        const has9842InOrderIds = (b.orderIds || []).includes('ORD-9842');
-        const has9842InStops = (b.stops || []).some(s => s.orderId === 'ORD-9842');
-        if (has9842InOrderIds || has9842InStops) {
-          b.orderIds = (b.orderIds || []).filter(id => id !== 'ORD-9842');
-          b.stops = (b.stops || []).filter(s => s.orderId !== 'ORD-9842');
-          b.totalOrders = b.stops.length;
-          cleaned = true;
-        }
-      }
-    });
-    if (cleaned) {
-      localStorage.setItem(BATCHES_STORAGE_KEY, JSON.stringify(batches));
-    }
     return batches;
   } catch (e) {
-    return INITIAL_DELIVERY_BATCHES;
+    return [];
   }
 };
 
@@ -79,14 +60,7 @@ export const getAllDeliveryAgents = async () => {
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.DELIVERY_AGENTS));
     if (snap.empty) {
-      const local = getStoredAgents();
-      for (const ag of local) {
-        await setDoc(doc(db, COLLECTIONS.DELIVERY_AGENTS, ag.id), {
-          ...ag,
-          createdAt: serverTimestamp()
-        });
-      }
-      return local;
+      return [];
     }
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (err) {
@@ -254,14 +228,7 @@ export const getAllDeliveryBatches = async () => {
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.DELIVERY_BATCHES));
     if (snap.empty) {
-      const local = getStoredBatches();
-      for (const b of local) {
-        await setDoc(doc(db, COLLECTIONS.DELIVERY_BATCHES, b.id), {
-          ...b,
-          createdAt: serverTimestamp()
-        });
-      }
-      return local;
+      return [];
     }
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (err) {
@@ -341,7 +308,29 @@ export const createDeliveryBatch = async (batchData, user) => {
     }
   }
 
-  // Update order status in order storage so assigned orders are marked out_for_delivery and omitted from future batch creation
+  if (isFirebaseConfigured) {
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, COLLECTIONS.DELIVERY_BATCHES, newBatch.id), {
+        ...newBatch,
+        createdAt: serverTimestamp()
+      });
+      newBatch.stops.forEach((stop) => {
+        batch.update(doc(db, COLLECTIONS.ORDERS, stop.orderId), {
+          status: 'out_for_delivery',
+          ...(newBatch.agentId ? { deliveryAgentId: newBatch.agentId } : {}),
+          ...(newBatch.agentName ? { deliveryAgentName: newBatch.agentName } : {}),
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    } catch (err) {
+      console.error('Firestore dispatch batch/order update failed:', err);
+      throw err;
+    }
+  }
+
+  // Update the order cache after Firestore succeeds (or immediately in local-only mode).
   try {
     const rawOrders = localStorage.getItem('grocery_admin_orders_v3');
     if (rawOrders) {
@@ -361,18 +350,7 @@ export const createDeliveryBatch = async (batchData, user) => {
       }
     }
   } catch (e) {
-    console.error('Error updating order statuses for batch creation:', e);
-  }
-
-  if (isFirebaseConfigured) {
-    try {
-      await setDoc(doc(db, COLLECTIONS.DELIVERY_BATCHES, newBatch.id), {
-        ...newBatch,
-        createdAt: serverTimestamp()
-      });
-    } catch (err) {
-      console.warn('Firestore batch create failed, saved locally:', err);
-    }
+    console.error('Error updating order status cache after batch creation:', e);
   }
 
   await logActivity(
@@ -674,4 +652,84 @@ export const reassignBatchRider = async (batchId, newAgentId, user) => {
   );
 
   return oldBatch;
+};
+
+/**
+ * Delete a single delivery batch by ID
+ */
+export const deleteDeliveryBatch = async (batchId, user) => {
+  const batches = getStoredBatches();
+  const target = batches.find(b => b.id === batchId);
+  const updatedBatches = batches.filter(b => b.id !== batchId);
+  saveStoredBatches(updatedBatches);
+
+  // If batch was assigned to an agent, free the agent status
+  if (target?.agentId) {
+    const agents = getStoredAgents();
+    const agIndex = agents.findIndex(a => a.id === target.agentId);
+    if (agIndex !== -1) {
+      agents[agIndex].status = 'available';
+      agents[agIndex].currentBatchId = null;
+      saveStoredAgents(agents);
+    }
+  }
+
+  if (isFirebaseConfigured) {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.DELIVERY_BATCHES, batchId));
+    } catch (err) {
+      console.warn('Firestore batch deletion failed:', err);
+    }
+  }
+
+  await logActivity(
+    user || { id: 'admin', name: 'Delivery Manager' },
+    'delivery.batch_delete',
+    COLLECTIONS.DELIVERY_BATCHES,
+    batchId,
+    `Deleted delivery batch ${target?.batchNumber || batchId}`
+  );
+
+  return true;
+};
+
+/**
+ * Clear all delivery batches (e.g. dummy test batches)
+ */
+export const clearAllDeliveryBatches = async (user) => {
+  saveStoredBatches([]);
+
+  // Free all agents
+  const agents = getStoredAgents();
+  const updatedAgents = agents.map(a => ({
+    ...a,
+    status: 'available',
+    currentBatchId: null,
+    assignedOrdersCount: 0,
+    completedToday: 0,
+    failedToday: 0,
+    codCollectedToday: 0,
+    codDepositedToday: 0
+  }));
+  saveStoredAgents(updatedAgents);
+
+  if (isFirebaseConfigured) {
+    try {
+      const snap = await getDocs(collection(db, COLLECTIONS.DELIVERY_BATCHES));
+      const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(deletePromises);
+    } catch (err) {
+      console.warn('Firestore clear batches failed:', err);
+    }
+  }
+
+  await logActivity(
+    user || { id: 'admin', name: 'Delivery Manager' },
+    'delivery.clear_all_batches',
+    COLLECTIONS.DELIVERY_BATCHES,
+    'all',
+    'Cleared all test delivery batches'
+  );
+
+  return true;
 };

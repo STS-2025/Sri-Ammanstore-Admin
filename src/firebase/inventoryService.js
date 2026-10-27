@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, getDoc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './config';
 import { COLLECTIONS } from './collections';
 import { INITIAL_STOCK_MOVEMENTS } from '../data/grocerySeedData';
@@ -12,12 +12,11 @@ const getStoredMovements = () => {
   try {
     const raw = localStorage.getItem(MOVEMENTS_STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(MOVEMENTS_STORAGE_KEY, JSON.stringify(INITIAL_STOCK_MOVEMENTS));
-      return INITIAL_STOCK_MOVEMENTS;
+      return [];
     }
     return JSON.parse(raw);
   } catch (e) {
-    return INITIAL_STOCK_MOVEMENTS;
+    return [];
   }
 };
 
@@ -39,7 +38,7 @@ export const getStockMovements = async () => {
 
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.STOCK_MOVEMENTS));
-    if (snap.empty) return getStoredMovements();
+    if (snap.empty) return [];
     const list = [];
     snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
     return list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -93,11 +92,15 @@ export const recordStockMovement = async ({
     const products = JSON.parse(localStorage.getItem('grocery_admin_products_v2') || '[]');
     const pIndex = products.findIndex((p) => p.id === productId);
     if (pIndex !== -1) {
-      const vIndex = (products[pIndex].variants || []).findIndex((v) => v.id === variantId);
+      const vIndex = (products[pIndex].variants || []).findIndex((v) => v.id === variantId || v.sku === sku);
       if (vIndex !== -1) {
         products[pIndex].variants[vIndex].stock = newQuantity;
-        localStorage.setItem('grocery_admin_products_v2', JSON.stringify(products));
+        products[pIndex].stock = newQuantity;
+      } else if (products[pIndex].variants && products[pIndex].variants.length > 0) {
+        products[pIndex].variants[0].stock = newQuantity;
+        products[pIndex].stock = newQuantity;
       }
+      localStorage.setItem('grocery_admin_products_v2', JSON.stringify(products));
     }
   } catch (err) {
     console.warn('Local variant stock sync notice:', err);
@@ -110,6 +113,38 @@ export const recordStockMovement = async ({
         ...newMovement,
         serverTimestamp: serverTimestamp()
       });
+
+      // Update product document variant stock in Firestore
+      if (productId) {
+        try {
+          const prodRef = doc(db, COLLECTIONS.PRODUCTS, productId);
+          const prodSnap = await getDoc(prodRef);
+          if (prodSnap.exists()) {
+            const pData = prodSnap.data();
+            let variants = Array.isArray(pData.variants) ? [...pData.variants] : [];
+            let vIdx = variants.findIndex((v) => v.id === variantId || v.sku === sku);
+            if (vIdx !== -1) {
+              variants[vIdx] = { ...variants[vIdx], stock: newQuantity };
+            } else if (variants.length > 0) {
+              variants[0] = { ...variants[0], stock: newQuantity };
+            }
+            const updatedDoc = {
+              ...pData,
+              variants,
+              stock: newQuantity,
+              updatedAt: new Date().toISOString()
+            };
+            await setDoc(prodRef, updatedDoc, { merge: true });
+
+            const categoryPath = pData.categoryName || pData.categoryId || pData.category || 'General';
+            try {
+              await setDoc(doc(db, COLLECTIONS.PRODUCTS, categoryPath, 'items', productId), updatedDoc, { merge: true });
+            } catch (_) {}
+          }
+        } catch (updateErr) {
+          console.error('[Firestore] Error updating product variant stock:', updateErr);
+        }
+      }
     } catch (err) {
       console.error('[Firestore] Error logging stock movement:', err);
     }

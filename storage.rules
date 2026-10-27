@@ -2,58 +2,102 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    function isAuthenticated() {
-      return request.auth != null;
+    function hasStaffRole(roles) {
+      return request.auth != null &&
+        request.auth.token.staffActive == true &&
+        request.auth.token.role in roles;
+    }
+
+    function isActiveStaff() {
+      return hasStaffRole([
+        'super_admin',
+        'store_manager',
+        'inventory_staff',
+        'delivery_manager',
+        'packing_staff',
+        'delivery_agent',
+        'marketing_staff',
+        'accounts_staff',
+        'manual_staff'
+      ]);
+    }
+
+    function isStoreManager() {
+      return hasStaffRole(['super_admin', 'store_manager']);
     }
 
     function isImageFile() {
-      return request.resource.contentType.matches('image/.*');
+      return request.resource == null || request.resource.contentType.matches('image/.*');
     }
 
     function isReasonableSize() {
-      return request.resource.size < 10 * 1024 * 1024; // 10MB max
+      return request.resource == null || request.resource.size < 10 * 1024 * 1024; // 10MB max
     }
 
     // Product Images & Media: Public read, Staff write
     match /products/{productId}/{allPaths=**} {
       allow read: if true;
-      allow write: if isAuthenticated() && isReasonableSize();
+      allow write: if hasStaffRole(['super_admin', 'store_manager', 'inventory_staff']) &&
+        isReasonableSize();
     }
 
     // Banners & Promotional Graphics: Public read, Marketing write
     match /banners/{bannerId}/{allPaths=**} {
       allow read: if true;
-      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+      allow write: if hasStaffRole(['super_admin', 'store_manager', 'marketing_staff']) &&
+        isImageFile() &&
+        isReasonableSize();
     }
 
     // Customer Profiles: Owner read/write, Staff read
     match /customers/{customerId}/{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && (request.auth.uid == customerId || request.auth.token.role != null) && isImageFile() && isReasonableSize();
+      allow read: if hasStaffRole(['super_admin', 'store_manager', 'accounts_staff']) ||
+        (request.auth != null && request.auth.uid == customerId);
+      allow write: if (isStoreManager() || (request.auth != null && request.auth.uid == customerId)) &&
+        isImageFile() &&
+        isReasonableSize();
     }
 
-    // Order Documents / Invoices: Authenticated staff and customer
+    // Order documents and invoices are available only to staff roles handling orders.
     match /orders/{orderId}/{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isReasonableSize();
+      allow read: if hasStaffRole(['super_admin', 'store_manager', 'packing_staff']);
+      allow write: if hasStaffRole(['super_admin', 'store_manager', 'packing_staff']) &&
+        isReasonableSize();
     }
 
-    // Delivery Proof (Photos/Signatures): Delivery agent upload, staff read
+    // Delivery proof is limited to active staff; customer access is not granted by order ID alone.
     match /deliveryProof/{orderId}/{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+      allow read: if hasStaffRole([
+        'super_admin',
+        'store_manager',
+        'delivery_manager',
+        'delivery_agent'
+      ]);
+      allow write: if hasStaffRole([
+          'super_admin',
+          'store_manager',
+          'delivery_manager',
+          'delivery_agent'
+        ]) &&
+        isImageFile() &&
+        isReasonableSize();
     }
 
-    // Return Photos: Customer & Staff upload
+    // Return photos are restricted to staff because the object path is not customer-scoped.
     match /returns/{returnId}/{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+      allow read: if hasStaffRole(['super_admin', 'store_manager', 'accounts_staff']);
+      allow write: if hasStaffRole(['super_admin', 'store_manager', 'accounts_staff']) &&
+        isImageFile() &&
+        isReasonableSize();
     }
 
     // Staff Photos
     match /staff/{staffId}/{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isImageFile() && isReasonableSize();
+      allow read: if isActiveStaff();
+      allow write: if (isStoreManager() ||
+        (isActiveStaff() && request.auth.uid == staffId)) &&
+        isImageFile() &&
+        isReasonableSize();
     }
   }
 }

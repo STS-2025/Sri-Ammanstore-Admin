@@ -1,52 +1,26 @@
 import { useAuth } from './useAuth';
 import { hasPermission, ROLES } from '../utils/roles';
 
-const STAFF_LOCAL_KEY = 'grocery_admin_staff_list_v5';
-
 /**
- * Checks if a specific permission is granted via role or active temporary delegation
+ * Checks the assigned role and administrator-issued, profile-backed delegation.
  */
-const checkPermissionForStaff = (userRole, currentUser, requiredPermission) => {
+const checkPermissionForStaff = (userRole, userProfile, requiredPermission) => {
   if (!userRole) return false;
   if (userRole === ROLES.SUPER_ADMIN) return true;
 
-  // 1. Standard role permission check
   if (hasPermission(userRole, requiredPermission)) return true;
 
-  // 2. Custom temporary delegation check
-  try {
-    const stored = localStorage.getItem(STAFF_LOCAL_KEY);
-    if (!stored) return false;
-
-    const staffList = JSON.parse(stored);
-    const staffMember = staffList.find(s => 
-      (s.email && currentUser?.email && s.email.toLowerCase() === currentUser.email.toLowerCase()) ||
-      s.uid === currentUser?.uid ||
-      s.role === userRole
-    );
-
-    if (staffMember && Array.isArray(staffMember.delegatedPermissions)) {
-      const now = new Date();
-      const activeDelegation = staffMember.delegatedPermissions.find(d => {
-        if (d.permission !== requiredPermission) return false;
-        if (!d.expiresAt) return true; // Permanent custom override
-        return new Date(d.expiresAt) > now; // Valid unexpired date
-      });
-
-      if (activeDelegation) return true;
-    }
-  } catch (e) {
-    console.warn('[usePermissions] Error evaluating custom delegations:', e);
-  }
-
-  return false;
+  return (userProfile?.delegatedPermissions || []).some((delegation) =>
+    delegation.permission === requiredPermission &&
+    (!delegation.expiresAt || new Date(delegation.expiresAt) > new Date())
+  );
 };
 
 export const usePermissions = () => {
-  const { userRole, currentUser } = useAuth();
+  const { userRole, currentUser, userProfile } = useAuth();
 
   const can = (permission) => {
-    return checkPermissionForStaff(userRole, currentUser, permission);
+    return checkPermissionForStaff(userRole, userProfile, permission);
   };
 
   const canAll = (permissions = []) => {

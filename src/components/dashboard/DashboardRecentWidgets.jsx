@@ -71,7 +71,7 @@ export const DashboardRecentWidgets = ({
           <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <ShoppingCart className="w-4 h-4 text-emerald-600" />
-              <span>Recent Live Orders</span>
+              <span>Recent Orders</span>
             </h3>
             <button
               onClick={() => navigate('/orders')}
@@ -113,7 +113,7 @@ export const DashboardRecentWidgets = ({
         </div>
 
         <div className="pt-3 mt-3 border-t border-slate-100 flex justify-between items-center text-[11px] text-slate-500">
-          <span>Real-time store checkout feed</span>
+          <span>Latest recorded store orders</span>
           <button onClick={() => navigate('/orders')} className="font-bold text-slate-700 hover:text-emerald-700">Open Fulfillment Workstation &rarr;</button>
         </div>
       </div>

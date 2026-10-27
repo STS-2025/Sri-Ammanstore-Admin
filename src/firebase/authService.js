@@ -1,47 +1,47 @@
 import {
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  getAuth,
+  connectAuthEmulator,
+  inMemoryPersistence,
+  setPersistence,
   signOut as fbSignOut,
   onAuthStateChanged,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  deleteUser
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db, isFirebaseConfigured } from './config';
+import { initializeApp, getApp, deleteApp } from 'firebase/app';
+import { httpsCallable } from 'firebase/functions';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  serverTimestamp
+} from 'firebase/firestore';
+import { auth, db, functions, isFirebaseConfigured } from './config';
 import { COLLECTIONS } from './collections';
 import { ROLES, ROLE_DEFINITIONS } from '../utils/roles';
 
-/**
- * Local Storage Key for Registered Staff Users
- */
-const REGISTERED_USERS_KEY = 'grocery_admin_registered_users';
+const isValidStaffProfile = (profile) =>
+  Boolean(profile && ROLE_DEFINITIONS[profile.role] && profile.status === 'active');
 
-export const getRegisteredUsers = () => {
-  try {
-    const saved = localStorage.getItem(REGISTERED_USERS_KEY);
-    return saved ? JSON.parse(saved) : [];
-  } catch (err) {
-    console.error('[authService] Error parsing registered users:', err);
-    return [];
+const requireStaffAdministrator = async () => {
+  if (!isFirebaseConfigured || !auth.currentUser) {
+    throw new Error('A signed-in Firebase administrator is required.');
   }
-};
 
-export const saveRegisteredUser = (user) => {
-  try {
-    const users = getRegisteredUsers();
-    const cleanEmail = (user.email || '').trim().toLowerCase();
-    const existingIndex = users.findIndex((u) => u.email.trim().toLowerCase() === cleanEmail);
-    if (existingIndex >= 0) {
-      users[existingIndex] = { ...users[existingIndex], ...user };
-    } else {
-      users.push(user);
-    }
-    localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
-
-    if (user.role && DEMO_USERS[user.role]) {
-      DEMO_USERS[user.role] = { ...DEMO_USERS[user.role], ...user };
-    }
-  } catch (err) {
-    console.error('[authService] Error saving registered user:', err);
+  const actorSnapshot = await getDoc(doc(db, COLLECTIONS.USERS, auth.currentUser.uid));
+  const actor = actorSnapshot.exists() ? actorSnapshot.data() : null;
+  if (!isValidStaffProfile(actor) || actor.role !== ROLES.SUPER_ADMIN) {
+    throw new Error('Only an active Super Admin can manage staff accounts.');
   }
+
+  return auth.currentUser.uid;
 };
 
 /**
@@ -50,8 +50,8 @@ export const saveRegisteredUser = (user) => {
 export const DEMO_USERS = {
   [ROLES.SUPER_ADMIN]: {
     uid: 'demo-super-admin-01',
-    email: 'owner@sriammanstore.com',
-    displayName: 'Thiru R. Amman',
+    email: 'stsadmin@gmail.com',
+    displayName: 'Mari R.',
     role: ROLES.SUPER_ADMIN,
     phone: '+91 98765 43210',
     status: 'active'
@@ -115,46 +115,51 @@ export const DEMO_USERS = {
 };
 
 /**
- * Sign in with email and password via Firebase Auth or Dev Registry
+ * Authenticate with Firebase and use the Firestore profile as the role source.
  */
-export const loginWithEmail = async (email, password, isRegistration = false, fallbackRole = null) => {
-  if (!isFirebaseConfigured) {
-    const cleanEmail = (email || '').trim().toLowerCase();
-    if (!cleanEmail) {
-      throw new Error('Please enter a valid staff email address.');
-    }
-
-    // 1. Check registered users in localStorage
-    const registered = getRegisteredUsers();
-    const foundRegistered = registered.find((u) => u.email.trim().toLowerCase() === cleanEmail);
-    if (foundRegistered) {
-      return foundRegistered;
-    }
-
-    // 2. Check preconfigured DEMO_USERS
-    const foundDemo = Object.values(DEMO_USERS).find((u) => u.email.trim().toLowerCase() === cleanEmail);
-    if (foundDemo) {
-      return foundDemo;
-    }
-
-    // 3. If explicit registration from Staff Sign In tab
-    if (isRegistration && fallbackRole) {
-      const dynamicUser = {
-        uid: `staff-${Date.now()}`,
-        email: cleanEmail,
-        displayName: cleanEmail.split('@')[0],
-        role: fallbackRole,
-        status: 'active'
-      };
-      saveRegisteredUser(dynamicUser);
-      return dynamicUser;
-    }
-
-    // 4. Reject unknown email during Staff Login
-    throw new Error('No staff account found for this email address. Please click on "Staff Sign In" tab to register first.');
+export const loginWithEmail = async (email, password, expectedRole) => {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error('Please enter a valid staff email address.');
   }
-  const userCredential = await signInWithEmailAndPassword(auth, email, password);
-  return userCredential.user;
+  if (!ROLE_DEFINITIONS[expectedRole]) {
+    throw new Error('Please select your assigned staff role.');
+  }
+  if (!password) {
+    throw new Error('Please enter your password.');
+  }
+
+  if (!isFirebaseConfigured) {
+    throw new Error('Staff authentication is unavailable because Firebase is not configured.');
+  }
+
+  const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+  try {
+    const profile = await fetchUserProfile(userCredential.user.uid);
+    if (!isValidStaffProfile(profile)) {
+      throw new Error('This account is not assigned an active staff role. Ask the Super Admin to verify its role and status.');
+    }
+    if (profile.role !== expectedRole) {
+      throw new Error('The selected role does not match the role assigned to this account.');
+    }
+    await refreshStaffRoleClaims();
+    return profile;
+  } catch (error) {
+    if (auth.currentUser?.uid === userCredential.user.uid) {
+      await fbSignOut(auth);
+    }
+    throw error;
+  }
+};
+
+export const refreshStaffRoleClaims = async () => {
+  if (!isFirebaseConfigured || !auth.currentUser) {
+    throw new Error('A signed-in Firebase user is required to synchronize staff access.');
+  }
+
+  const syncClaims = httpsCallable(functions, 'syncMyStaffRoleClaims');
+  await syncClaims();
+  await auth.currentUser.getIdToken(true);
 };
 
 /**
@@ -170,29 +175,131 @@ export const logoutUser = async () => {
  * Send password reset email
  */
 export const resetPassword = async (email) => {
-  if (isFirebaseConfigured) {
-    await sendPasswordResetEmail(auth, email);
+  if (!isFirebaseConfigured) {
+    throw new Error('Password reset is unavailable because Firebase is not configured.');
   }
+  await sendPasswordResetEmail(auth, email.trim());
 };
 
 /**
- * Fetch user profile from Firestore `users` collection or Dev Registry
+ * Fetch the authenticated user's authoritative profile from Firestore.
  */
 export const fetchUserProfile = async (uid) => {
   if (!isFirebaseConfigured) {
-    const registered = getRegisteredUsers();
-    const foundReg = registered.find((u) => u.uid === uid);
-    if (foundReg) return foundReg;
+    throw new Error('Staff authentication is unavailable because Firebase is not configured.');
+  }
 
-    const demo = Object.values(DEMO_USERS).find((u) => u.uid === uid) || DEMO_USERS[ROLES.SUPER_ADMIN];
-    return demo;
+  const docSnap = await getDoc(doc(db, COLLECTIONS.USERS, uid));
+  if (docSnap.exists()) return { ...docSnap.data(), uid };
+
+  const resolveProfile = httpsCallable(functions, 'resolveMyStaffProfile');
+  const result = await resolveProfile();
+  return result.data;
+};
+
+export const subscribeToUserProfile = (uid, onProfile, onError) => {
+  return onSnapshot(
+    doc(db, COLLECTIONS.USERS, uid),
+    (snapshot) => onProfile(snapshot.exists() ? { ...snapshot.data(), uid } : null),
+    onError
+  );
+};
+
+export const getAllStaffProfiles = async () => {
+  await requireStaffAdministrator();
+  const snapshot = await getDocs(collection(db, COLLECTIONS.USERS));
+  return snapshot.docs.map((staffDoc) => ({ ...staffDoc.data(), uid: staffDoc.id }));
+};
+
+export const createStaffAccount = async ({ email, password, displayName, phone, role }) => {
+  await requireStaffAdministrator();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail || !displayName?.trim() || !ROLE_DEFINITIONS[role] || !password || password.length < 6) {
+    throw new Error('A valid email, staff name, assigned role, and password of at least 6 characters are required.');
   }
-  const docRef = doc(db, COLLECTIONS.USERS, uid);
-  const docSnap = await getDoc(docRef);
-  if (docSnap.exists()) {
-    return { uid, ...docSnap.data() };
+
+  const provisioningApp = initializeApp(getApp().options, `staff-provisioning-${Date.now()}-${crypto.randomUUID()}`);
+  const provisioningAuth = getAuth(provisioningApp);
+  let createdUser = null;
+  let profileWritten = false;
+
+  try {
+    if (import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
+      connectAuthEmulator(provisioningAuth, 'http://localhost:9099', { disableWarnings: true });
+    }
+    await setPersistence(provisioningAuth, inMemoryPersistence);
+    const credential = await createUserWithEmailAndPassword(provisioningAuth, cleanEmail, password);
+    createdUser = credential.user;
+    const profile = {
+      uid: createdUser.uid,
+      email: cleanEmail,
+      displayName: displayName.trim(),
+      phone: phone || '',
+      role,
+      status: 'active',
+      delegatedPermissions: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+    await setDoc(doc(db, COLLECTIONS.USERS, createdUser.uid), profile);
+    profileWritten = true;
+    return { ...profile, uid: createdUser.uid, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  } catch (error) {
+    if (createdUser) {
+      try {
+        if (profileWritten) {
+          await deleteDoc(doc(db, COLLECTIONS.USERS, createdUser.uid));
+        }
+        await deleteUser(createdUser);
+      } catch (cleanupError) {
+        console.error('[authService] Failed to clean up incomplete staff provisioning:', cleanupError);
+      }
+    }
+    throw error;
+  } finally {
+    try {
+      if (provisioningAuth.currentUser) {
+        await fbSignOut(provisioningAuth);
+      }
+    } finally {
+      await deleteApp(provisioningApp);
+    }
   }
-  return null;
+};
+
+export const sendStaffPasswordReset = async (email) => {
+  await requireStaffAdministrator();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error('The staff member does not have a valid email address.');
+  }
+  await sendPasswordResetEmail(auth, cleanEmail);
+};
+
+export const updateStaffProfile = async (uid, updates) => {
+  const actorUid = await requireStaffAdministrator();
+  if (uid === actorUid && ['role', 'status', 'delegatedPermissions'].some((key) => key in updates)) {
+    throw new Error('You cannot change your own role, status, or delegated permissions.');
+  }
+  if (updates.role && !ROLE_DEFINITIONS[updates.role]) {
+    throw new Error('The selected staff role is not valid.');
+  }
+  if (updates.status && !['active', 'disabled'].includes(updates.status)) {
+    throw new Error('The selected staff status is not valid.');
+  }
+
+  await updateDoc(doc(db, COLLECTIONS.USERS, uid), {
+    ...updates,
+    updatedAt: serverTimestamp()
+  });
+};
+
+export const deleteStaffProfile = async (uid) => {
+  const actorUid = await requireStaffAdministrator();
+  if (uid === actorUid) {
+    throw new Error('You cannot delete your own staff account.');
+  }
+  await deleteDoc(doc(db, COLLECTIONS.USERS, uid));
 };
 
 /**
@@ -200,16 +307,7 @@ export const fetchUserProfile = async (uid) => {
  */
 export const subscribeToAuth = (callback) => {
   if (!isFirebaseConfigured) {
-    const savedRole = localStorage.getItem('grocery_admin_active_role') || ROLES.SUPER_ADMIN;
-    const savedUserEmail = localStorage.getItem('grocery_admin_active_user_email');
-    
-    const registered = getRegisteredUsers();
-    const matchedRegisteredUser = savedUserEmail 
-      ? registered.find((u) => u.email.trim().toLowerCase() === savedUserEmail.trim().toLowerCase())
-      : registered.find((u) => u.role === savedRole);
-
-    const initialUser = matchedRegisteredUser || DEMO_USERS[savedRole] || DEMO_USERS[ROLES.SUPER_ADMIN];
-    callback(initialUser);
+    callback(null);
     return () => {};
   }
   return onAuthStateChanged(auth, callback);

@@ -10,6 +10,7 @@ import {
   createPromoCode, 
   updatePromoCode, 
   deletePromoCode,
+  clearAllPromoCodes,
   getPromoAnalytics 
 } from '../../firebase/promoService';
 import { PromoFormModal } from '../../components/promotions/PromoFormModal';
@@ -68,6 +69,16 @@ export const PromotionsPage = () => {
     }
   };
 
+  const handleClearAllPromos = async () => {
+    if (!window.confirm('Are you sure you want to clear ALL promo codes?')) return;
+    try {
+      await clearAllPromoCodes(currentUser);
+      await loadPromos();
+    } catch (err) {
+      alert(`Error clearing promo codes: ${err.message}`);
+    }
+  };
+
   const handleToggleStatus = async (promo) => {
     const nextStatus = promo.status === 'active' ? 'paused' : 'active';
     try {
@@ -104,7 +115,7 @@ export const PromotionsPage = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => {
@@ -116,6 +127,17 @@ export const PromotionsPage = () => {
             <Plus className="w-4 h-4" />
             Create Promo Code
           </button>
+
+          {promos.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClearAllPromos}
+              className="px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5"
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear All Test Promos
+            </button>
+          )}
 
           <button
             onClick={loadPromos}
@@ -218,112 +240,122 @@ export const PromotionsPage = () => {
       {/* TAB 1: Coupons List */}
       {activeTab === 'list' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredPromos.map(promo => {
-              const usagePct = Math.round(((promo.timesUsed || 0) / (promo.totalUsageLimit || 1)) * 100);
+          {filteredPromos.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500 space-y-3">
+              <Tag className="w-10 h-10 mx-auto text-slate-300" />
+              <h3 className="text-base font-bold text-slate-800">No Promo Codes Found</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                All demo promo codes have been cleared. Click "Create Promo Code" above to configure your custom coupons.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredPromos.map(promo => {
+                const usagePct = Math.round(((promo.timesUsed || 0) / (promo.totalUsageLimit || 1)) * 100);
 
-              return (
-                <div
-                  key={promo.id}
-                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all"
-                >
-                  <div>
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold text-sm tracking-wider">
-                            {promo.code}
-                          </span>
-                          {promo.firstOrderOnly && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">
-                              1st Order Only
+                return (
+                  <div
+                    key={promo.id}
+                    className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold text-sm tracking-wider">
+                              {promo.code}
                             </span>
-                          )}
+                            {promo.firstOrderOnly && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">
+                                1st Order Only
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs font-semibold text-slate-800 mt-2 line-clamp-1">{promo.description}</p>
                         </div>
-                        <p className="text-xs font-semibold text-slate-800 mt-2 line-clamp-1">{promo.description}</p>
-                      </div>
 
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                        promo.status === 'active'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : promo.status === 'paused'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}>
-                        {promo.status}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 bg-slate-50 rounded-xl p-3 space-y-1.5 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Discount Benefit:</span>
-                        <span className="font-bold text-slate-900">
-                          {promo.type === 'percentage'
-                            ? `${promo.value}% Off (Max ₹${promo.maxDiscount})`
-                            : promo.type === 'free_delivery'
-                            ? 'Free Delivery Waived Off'
-                            : `Flat ₹${promo.value} Off`}
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                          promo.status === 'active'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : promo.status === 'paused'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}>
+                          {promo.status}
                         </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Min Order Cart:</span>
-                        <span className="font-semibold text-slate-700">₹{promo.minOrderAmount || 0}</span>
+
+                      <div className="mt-3 bg-slate-50 rounded-xl p-3 space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Discount Benefit:</span>
+                          <span className="font-bold text-slate-900">
+                            {promo.type === 'percentage'
+                              ? `${promo.value}% Off (Max ₹${promo.maxDiscount})`
+                              : promo.type === 'free_delivery'
+                              ? 'Free Delivery Waived Off'
+                              : `Flat ₹${promo.value} Off`}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Min Order Cart:</span>
+                          <span className="font-semibold text-slate-700">₹{promo.minOrderAmount || 0}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Validity:</span>
+                          <span className="text-slate-600">{promo.startDate} to {promo.endDate}</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Validity:</span>
-                        <span className="text-slate-600">{promo.startDate} to {promo.endDate}</span>
+
+                      {/* Usage Progress */}
+                      <div className="mt-3">
+                        <div className="flex justify-between text-[11px] text-slate-500 mb-1">
+                          <span>Used: <strong className="text-slate-800">{promo.timesUsed}</strong> / {promo.totalUsageLimit}</span>
+                          <span className="font-medium text-emerald-700">{usagePct}%</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                          <div className="bg-emerald-600 h-full" style={{ width: `${Math.min(100, usagePct)}%` }} />
+                        </div>
                       </div>
                     </div>
 
-                    {/* Usage Progress */}
-                    <div className="mt-3">
-                      <div className="flex justify-between text-[11px] text-slate-500 mb-1">
-                        <span>Used: <strong className="text-slate-800">{promo.timesUsed}</strong> / {promo.totalUsageLimit}</span>
-                        <span className="font-medium text-emerald-700">{usagePct}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-emerald-600 h-full" style={{ width: `${Math.min(100, usagePct)}%` }} />
+                    {/* Actions Bar */}
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleStatus(promo)}
+                        className={`font-semibold ${promo.status === 'active' ? 'text-amber-700 hover:text-amber-800' : 'text-emerald-700 hover:text-emerald-800'}`}
+                      >
+                        {promo.status === 'active' ? 'Pause Code' : 'Activate Code'}
+                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPromoForEdit(promo);
+                            setIsModalOpen(true);
+                          }}
+                          className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+                          title="Edit Promo"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePromo(promo.id)}
+                          className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Delete Promo"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   </div>
-
-                  {/* Actions Bar */}
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleStatus(promo)}
-                      className={`font-semibold ${promo.status === 'active' ? 'text-amber-700 hover:text-amber-800' : 'text-emerald-700 hover:text-emerald-800'}`}
-                    >
-                      {promo.status === 'active' ? 'Pause Code' : 'Activate Code'}
-                    </button>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedPromoForEdit(promo);
-                          setIsModalOpen(true);
-                        }}
-                        className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-                        title="Edit Promo"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDeletePromo(promo.id)}
-                        className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="Delete Promo"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

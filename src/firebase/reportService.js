@@ -26,7 +26,7 @@ export const getComprehensiveReportData = async () => {
   const totalSales = orders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? Number(o.totalAmount || 0) : 0), 0);
   const deliveredOrders = orders.filter(o => o.status === 'delivered');
   const cancelledOrders = orders.filter(o => o.status === 'cancelled');
-  const pendingOrders = orders.filter(o => o.status === 'placed' || o.status === 'confirmed' || o.status === 'picking');
+  const pendingOrders = orders.filter(o => o.status !== 'delivered' && o.status !== 'cancelled' && o.status !== 'returned');
   const deliveredRevenue = deliveredOrders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
   const aov = orders.length > 0 ? Math.round(totalSales / orders.length) : 0;
 
@@ -53,16 +53,42 @@ export const getComprehensiveReportData = async () => {
 
   const topSellingProducts = Object.values(productSalesMap).sort((a, b) => b.unitsSold - a.unitsSold);
 
-  // 3. Customer Spending
-  const customerSpending = customers.map(c => ({
-    id: c.id,
-    name: c.name,
-    phone: c.phone,
-    totalOrders: c.totalOrders || 0,
-    totalSpent: c.totalSpent || 0,
-    smartCoins: c.smartCoins || 0,
-    status: c.status || 'active'
-  })).sort((a, b) => b.totalSpent - a.totalSpent);
+  // 3. Customer Spending (Calculated dynamically from real orders)
+  const custMap = {};
+  customers.forEach(c => {
+    custMap[c.id || c.phone || c.email] = {
+      id: c.id,
+      name: c.name,
+      phone: c.phone || '',
+      totalOrders: 0,
+      totalSpent: 0,
+      smartCoins: c.smartCoins || 0,
+      status: c.status || 'Active'
+    };
+  });
+
+  orders.forEach(ord => {
+    if (ord.status !== 'cancelled') {
+      const key = ord.customerId || ord.customerPhone || ord.customerEmail || ord.customerName || 'guest';
+      if (!custMap[key]) {
+        custMap[key] = {
+          id: key,
+          name: ord.customerName || 'Store Customer',
+          phone: ord.customerPhone || '',
+          totalOrders: 0,
+          totalSpent: 0,
+          smartCoins: 0,
+          status: 'Active'
+        };
+      }
+      custMap[key].totalOrders += 1;
+      custMap[key].totalSpent += Number(ord.totalAmount || 0);
+    }
+  });
+
+  const customerSpending = Object.values(custMap)
+    .filter(c => c.totalOrders > 0 || c.totalSpent > 0)
+    .sort((a, b) => b.totalSpent - a.totalSpent);
 
   // 4. Delivery Agent Performance
   const agentPerformance = agents.map(ag => {

@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Sri Amman POS Scanner",
+    "slug": "sri-amman-pos-scanner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "sriammanstore",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#090d16"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sriammanstore.posscanner",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Sri Amman Store POS Scanner requires camera access to scan grocery product barcodes."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#090d16"
+      },
+      "package": "com.sriammanstore.posscanner",
+      "permissions": [
+        "CAMERA",
+        "VIBRATE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "sriammanstore",
+              "host": "scanner"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Sri Amman Store POS Scanner to use your camera to scan barcodes."
+        }
+      ]
+    ]
+  }
+}

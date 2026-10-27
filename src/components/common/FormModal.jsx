@@ -17,15 +17,16 @@ export const FormModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
       <div
-        className={`w-full ${maxWidth} max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-modal border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150`}
+        className={`w-full ${maxWidth} max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-modal border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150`}
         role="dialog"
+        aria-modal="true"
       >
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">{title}</h3>
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-100 bg-white">
+          <div className="min-w-0">
+            <h3 className="text-base font-bold text-slate-900 break-words">{title}</h3>
             {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
           </div>
           <button
@@ -38,13 +39,13 @@ export const FormModal = ({
         </div>
 
         {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
           {children}
         </div>
 
         {/* Modal Footer */}
         {showFooter && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50 border-t border-slate-100">
+          <div className="flex flex-wrap items-center justify-end gap-2 px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 border-t border-slate-100">
             <button
               type="button"
               onClick={onClose}

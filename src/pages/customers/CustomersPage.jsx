@@ -48,13 +48,14 @@ import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { PERMISSIONS } from '../../utils/permissions';
 import {
-  getAllCustomers,
+  getAllOnlineCustomers,
   setCustomerStatus,
   adjustSmartCoins,
   getSmartCoinTransactions,
   getBirthdayCustomers,
   updateCustomerNotes
 } from '../../firebase/customerService';
+import { COLLECTIONS } from '../../firebase/collections';
 import { getAllOrders } from '../../firebase/orderService';
 import {
   sendMessage,
@@ -117,9 +118,9 @@ export const CustomersPage = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const custData = await getAllCustomers();
+      const custData = await getAllOnlineCustomers();
       const orderData = await getAllOrders();
-      const bData = await getBirthdayCustomers();
+      const bData = await getBirthdayCustomers(COLLECTIONS.ONLINE_CUSTOMERS);
       const logs = getMessageLogs();
       setCustomers(custData);
       setAllOrders(orderData);
@@ -204,7 +205,12 @@ export const CustomersPage = () => {
   });
 
   // Limit top 100 purchase value if tab selected
-  const displayedCustomers = activeTab === 'top100' ? filteredCustomers.slice(0, 100) : filteredCustomers;
+  const displayedCustomers = (activeTab === 'top100' ? filteredCustomers.slice(0, 100) : filteredCustomers)
+    .map((customer) => ({
+      ...customer,
+      name: customer.name || customer.fullName || customer.displayName || customer.customerName ||
+        [customer.firstName, customer.lastName].filter(Boolean).join(' ') || 'Online Customer'
+    }));
 
   const handleOpenCustomerDetail = async (cust) => {
     setSelectedCustomer(cust);
@@ -228,7 +234,7 @@ export const CustomersPage = () => {
     if (!selectedCustomer) return;
     setIsSavingNotes(true);
     try {
-      const updatedCust = await updateCustomerNotes(selectedCustomer.id, supportNoteInput.trim(), currentUser);
+      const updatedCust = await updateCustomerNotes(selectedCustomer.id, supportNoteInput.trim(), currentUser, COLLECTIONS.ONLINE_CUSTOMERS);
       setSelectedCustomer(updatedCust);
       notify.success('Support Notes Saved', 'Customer notes updated in CRM profile.');
       await loadData();
@@ -259,7 +265,8 @@ export const CustomersPage = () => {
         customerId: selectedCustomer.id,
         deltaCoins: Number(coinsDelta),
         reason: coinsReason.trim(),
-        user: currentUser
+        user: currentUser,
+        collectionName: COLLECTIONS.ONLINE_CUSTOMERS
       });
 
       notify.success(
@@ -283,7 +290,7 @@ export const CustomersPage = () => {
     const nextStatus = targetBlockCustomer.status === 'Blocked' ? 'Active' : 'Blocked';
 
     try {
-      await setCustomerStatus(targetBlockCustomer.id, nextStatus, reason, currentUser);
+      await setCustomerStatus(targetBlockCustomer.id, nextStatus, reason, currentUser, COLLECTIONS.ONLINE_CUSTOMERS);
       notify.success(
         'Account Status Changed',
         `${targetBlockCustomer.name} is now marked as ${nextStatus}.`
@@ -365,6 +372,8 @@ export const CustomersPage = () => {
 
     const rows = displayedCustomers.map((c) => ({
       ...c,
+      name: c.name || c.fullName || c.displayName || c.customerName ||
+        [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Online Customer',
       email: c.email || 'N/A',
       gender: c.gender || 'Unspecified',
       dob: c.dob || 'N/A',
@@ -384,7 +393,7 @@ export const CustomersPage = () => {
       render: (row) => (
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center shrink-0 font-mono">
-            {row.name.charAt(0)}
+            {(row.name || 'C').charAt(0)}
           </div>
           <div>
             <div className="font-bold text-slate-900 flex items-center gap-1.5">
@@ -989,7 +998,7 @@ export const CustomersPage = () => {
         <form onSubmit={handleSendMessageSubmit} className="space-y-4 text-xs">
           <div>
             <label className="input-label">Communication Channel</label>
-            <div className="grid grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {[
                 { id: 'whatsapp', label: 'WhatsApp' },
                 { id: 'sms', label: 'SMS' },

@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   HeartHandshake, Plus, Search, Filter, RefreshCw, CheckCircle2, 
-  AlertCircle, PackagePlus, Bell, Eye, ArrowUpRight, Flame, Users
+  AlertCircle, PackagePlus, Bell, Eye, ArrowUpRight, Flame, Users, Trash2
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { 
   getAllProductRequests, 
   updateProductRequestStatus, 
-  createProductRequest 
+  createProductRequest,
+  deleteProductRequest,
+  clearAllProductRequests
 } from '../../firebase/productRequestService';
 import { ProductRequestModal } from '../../components/productRequests/ProductRequestModal';
 
@@ -82,6 +84,26 @@ export const ProductRequestsPage = () => {
     }
   };
 
+  const handleDeleteSingleRequest = async (requestId, productName) => {
+    if (!window.confirm(`Are you sure you want to delete request for "${productName || 'this item'}"?`)) return;
+    try {
+      await deleteProductRequest(requestId, currentUser);
+      await loadRequests();
+    } catch (err) {
+      alert(`Error deleting request: ${err.message}`);
+    }
+  };
+
+  const handleClearAllRequests = async () => {
+    if (!window.confirm('Are you sure you want to clear ALL test product requests?')) return;
+    try {
+      await clearAllProductRequests(currentUser);
+      await loadRequests();
+    } catch (err) {
+      alert(`Error clearing requests: ${err.message}`);
+    }
+  };
+
   // KPIs
   const kpis = useMemo(() => {
     const totalRequests = requests.reduce((sum, r) => sum + (r.requestedByCount || 1), 0);
@@ -120,6 +142,17 @@ export const ProductRequestsPage = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {requests.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClearAllRequests}
+              className="px-3 py-2 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 rounded-xl transition-colors flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Clear All Test Requests
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setIsAddOpen(true)}
@@ -213,7 +246,9 @@ export const ProductRequestsPage = () => {
                 </tr>
               ) : (
                 filteredRequests.map(req => {
-                  const isHighDemand = req.requestedByCount >= 5;
+                  const isHighDemand = (req.requestedByCount || 1) >= 5;
+                  const rDate = req.lastRequestedAt ? new Date(req.lastRequestedAt) : null;
+                  const dateStr = rDate && !isNaN(rDate.getTime()) ? rDate.toLocaleDateString() : '—';
 
                   return (
                     <tr key={req.id} className="hover:bg-slate-50">
@@ -239,7 +274,7 @@ export const ProductRequestsPage = () => {
                           isHighDemand ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-800'
                         }`}>
                           <Users className="w-3 h-3" />
-                          {req.requestedByCount} {req.requestedByCount === 1 ? 'customer' : 'customers'}
+                          {req.requestedByCount || 1} {(req.requestedByCount || 1) === 1 ? 'customer' : 'customers'}
                         </span>
                       </td>
 
@@ -253,25 +288,35 @@ export const ProductRequestsPage = () => {
                             ? 'bg-amber-100 text-amber-800'
                             : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {req.status.replace('_', ' ')}
+                          {(req.status || 'new').replace('_', ' ')}
                         </span>
                       </td>
 
                       <td className="py-3 px-4 text-slate-500">
-                        {new Date(req.lastRequestedAt).toLocaleDateString()}
+                        {dateStr}
                       </td>
 
                       <td className="py-3 px-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedRequest(req);
-                            setIsModalOpen(true);
-                          }}
-                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-lg text-xs transition-colors"
-                        >
-                          Review & Action
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRequest(req);
+                              setIsModalOpen(true);
+                            }}
+                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-lg text-xs transition-colors"
+                          >
+                            Review & Action
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSingleRequest(req.id, req.productName)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Delete Request"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

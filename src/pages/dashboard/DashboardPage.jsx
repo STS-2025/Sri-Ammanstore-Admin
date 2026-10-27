@@ -27,6 +27,7 @@ import { DashboardCharts } from '../../components/dashboard/DashboardCharts';
 import { DashboardRecentWidgets } from '../../components/dashboard/DashboardRecentWidgets';
 import { BarcodeScannerModal } from '../../components/common/BarcodeScannerModal';
 import { ProductFormModal } from '../../components/products/ProductFormModal';
+import { ModalErrorBoundary } from '../../components/common/ModalErrorBoundary';
 import { getAllProducts, createProduct } from '../../firebase/productService';
 import { getInventoryMetrics } from '../../firebase/inventoryService';
 import { getAllOrders } from '../../firebase/orderService';
@@ -36,47 +37,7 @@ import { formatCurrency } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
 
-const SAMPLE_STOCK_LOGS_BASELINE = [
-  {
-    id: 'log-001',
-    userEmail: 'owner@sriammanstore.com',
-    userName: 'Karthikeyan (Owner)',
-    action: 'PRICE_UPDATE',
-    module: 'Products & Pricing',
-    targetId: 'prod-001-var-01',
-    recordName: 'Aachi Turmeric Powder (மஞ்சள் தூள்) 500g',
-    previousValue: '₹180',
-    newValue: '₹195 (+8%)',
-    reason: 'Supplier procurement price increase by 8%',
-    createdAt: '2026-09-24T05:12:00Z'
-  },
-  {
-    id: 'log-002',
-    userEmail: 'manager@sriammanstore.com',
-    userName: 'Senthil Nathan',
-    action: 'DELIVERY_BATCH_DISPATCH',
-    module: 'Delivery Logistics',
-    targetId: 'batch-cbe-01',
-    recordName: 'BATCH-2026-0924-A (3 Orders)',
-    previousValue: 'Draft',
-    newValue: 'Dispatched to Saravanan M.',
-    reason: 'Morning delivery run to RS Puram and Tatabad zones',
-    createdAt: '2026-09-24T05:30:00Z'
-  },
-  {
-    id: 'log-003',
-    userEmail: 'manager@sriammanstore.com',
-    userName: 'Senthil Nathan',
-    action: 'STOCK_ADJUSTMENT',
-    module: 'Inventory Operations',
-    targetId: 'inv-var-88',
-    recordName: 'Idhayam Sesame Oil 1L Pouch',
-    previousValue: 'Stock: 48 units',
-    newValue: 'Stock: 98 units (+50 intake)',
-    reason: 'Received morning supplier stock batch',
-    createdAt: '2026-09-24T06:45:00Z'
-  }
-];
+const normalizeOrderStatus = (status) => String(status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 
 export const DashboardPage = () => {
   const [metrics, setMetrics] = useState(null);
@@ -88,6 +49,7 @@ export const DashboardPage = () => {
 
   const [scannerOpen, setScannerOpen] = useState(false);
   const [addProductOpen, setAddProductOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const navigate = useNavigate();
   const notify = useNotification();
@@ -110,22 +72,39 @@ export const DashboardPage = () => {
       // Load local stock audit logs
       try {
         const storedLogs = JSON.parse(localStorage.getItem('grocery_admin_audit_logs') || '[]');
-        const combined = [...storedLogs, ...SAMPLE_STOCK_LOGS_BASELINE];
-        const unique = Array.from(new Map(combined.map(l => [l.id || `${l.createdAt}-${l.action}`, l])).values());
-        setStockAuditLogs(unique);
+        setStockAuditLogs(storedLogs);
       } catch (e) {
-        setStockAuditLogs(SAMPLE_STOCK_LOGS_BASELINE);
+        setStockAuditLogs([]);
       }
     } catch (e) {
       console.warn('Dashboard data fetch note:', e);
     }
   };
 
+
   useEffect(() => {
     loadData();
   }, []);
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const todaysOrders = orders.filter(o => {
+    const orderDate = new Date(o.createdAt);
+    orderDate.setHours(0, 0, 0, 0);
+    return orderDate.getTime() === today.getTime();
+  });
+
+  const todaysOrdersCount = todaysOrders.length;
+
+  const todaysSalesAmount = todaysOrders.reduce((sum, order) => (
+    ['cancelled', 'returned'].includes(normalizeOrderStatus(order.status))
+      ? sum
+      : sum + (Number(order.totalAmount) || 0)
+  ), 0);
+
   const handleCreateProductSubmit = async (formData) => {
+    setIsSubmitting(true);
     try {
       await createProduct(formData, currentUser);
       notify.success('Product Added', `${formData.name} added to catalog.`);
@@ -133,17 +112,47 @@ export const DashboardPage = () => {
       await loadData();
     } catch (e) {
       notify.error('Creation Failed', e.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  // Active agents calculation
-  const activeAgentsCount = deliveryAgents.filter(a => a.status === 'active' || a.status === 'on_delivery' || a.status === 'available').length || 5;
+  // Dynamic calculations from live store data
+  const totalSalesAmount = orders.reduce((sum, order) => (
+    ['cancelled', 'returned'].includes(normalizeOrderStatus(order.status))
+      ? sum
+      : sum + (Number(order.totalAmount) || 0)
+  ), 0);
+  const onlinePrepaidTotal = orders.reduce((sum, order) => (
+    order.paymentMethod !== 'COD' &&
+    normalizeOrderStatus(order.paymentStatus) === 'paid' &&
+    !['cancelled', 'returned'].includes(normalizeOrderStatus(order.status))
+      ? sum + (Number(order.totalAmount) || 0)
+      : sum
+  ), 0);
+  const pendingCodTotal = orders.reduce((sum, order) => (
+    order.paymentMethod === 'COD' &&
+    !['delivered', 'cancelled', 'returned'].includes(normalizeOrderStatus(order.status))
+      ? sum + (Number(order.totalAmount) || 0)
+      : sum
+  ), 0);
+
+  const pendingCount = orders.filter(o => ['confirmed', 'pending'].includes(normalizeOrderStatus(o.status))).length;
+  const waitingPackingCount = orders.filter(o => normalizeOrderStatus(o.status) === 'picking').length;
+  const packedCount = orders.filter(o => normalizeOrderStatus(o.status) === 'packed').length;
+  const readyToShipCount = orders.filter(o => ['ready', 'ready_to_ship'].includes(normalizeOrderStatus(o.status))).length;
+  const outForDeliveryCount = orders.filter(o => normalizeOrderStatus(o.status) === 'out_for_delivery').length;
+  const deliveredCount = orders.filter(o => normalizeOrderStatus(o.status) === 'delivered').length;
+  const cancelledCount = orders.filter(o => normalizeOrderStatus(o.status) === 'cancelled').length;
+  const returnedCount = orders.filter(o => normalizeOrderStatus(o.status) === 'returned').length;
+
+  const activeAgentsCount = deliveryAgents.filter(a => a.status === 'active' || a.status === 'on_delivery' || a.status === 'available').length;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Grocery Retail Operations"
-        subtitle="Real-time command center for Sri Amman Store retail operations, live inventory, and multi-channel fulfillment."
+        subtitle="Store operations overview based on recorded orders, products, and inventory."
         actions={
           <button
             onClick={() => setAddProductOpen(true)}
@@ -173,53 +182,71 @@ export const DashboardPage = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
           {/* ROW 1: Sales, Orders & Payment Totals */}
           {/* 1. Today's Orders */}
+          {/*<StatCard
+            title="Today's Total Orders"
+            value={`${orders.length}`}
+            change={orders.length > 0 ? "Live count" : "0 orders"}
+            changeType={orders.length > 0 ? "positive" : "neutral"}
+            icon={ShoppingCart}
+            variant="primary"
+            onClick={() => navigate('/orders')}
+          />*/}
           <StatCard
-            title="Today's Orders"
-            value={`${orders.length || 84}`}
-            change="+14.2%"
-            changeType="positive"
+            title="Today's Total Orders"
+            value={`${todaysOrdersCount}`}
+            change={todaysOrdersCount > 0 ? "Today's orders" : "0 orders"}
+            changeType={todaysOrdersCount > 0 ? "positive" : "neutral"}
             icon={ShoppingCart}
             variant="primary"
             onClick={() => navigate('/orders')}
           />
 
           {/* 2. Today's Sales */}
+          {/*<StatCard
+            title="Today's Sales Revenue"
+            value={formatCurrency(totalSalesAmount)}
+            change={totalSalesAmount > 0 ? "Gross total" : "₹0 revenue"}
+            changeType={totalSalesAmount > 0 ? "positive" : "neutral"}
+            icon={IndianRupee}
+            variant="primary"
+            onClick={() => navigate('/orders')}
+          />*/}
           <StatCard
-            title="Today's Sales"
-            value={formatCurrency(48650)}
-            change="+18.4%"
-            changeType="positive"
+            title="Today's Sales Revenue"
+            value={formatCurrency(todaysSalesAmount)}
+            change={todaysSalesAmount > 0 ? "Today's sales, excluding cancelled/returned" : "₹0 revenue"}
+            changeType={todaysSalesAmount > 0 ? "positive" : "neutral"}
             icon={IndianRupee}
             variant="primary"
             onClick={() => navigate('/orders')}
           />
 
-          {/* 3. Online / Prepaid Payment Total (NEW) */}
+          {/* 3. Online / Prepaid Payment Total */}
           <StatCard
             title="Online / Prepaid Total"
-            value={formatCurrency(33800)}
-            change="70% of revenue"
+            value={formatCurrency(onlinePrepaidTotal)}
+            change="Paid prepaid orders"
             changeType="positive"
             icon={Zap}
             variant="primary"
             onClick={() => navigate('/orders')}
           />
 
-          {/* 4. Pending COD (Cash on Delivery) */}
+          {/* 4. Pending COD Total */}
           <StatCard
             title="Pending COD Total"
-            value={formatCurrency(14850)}
+            value={formatCurrency(pendingCodTotal)}
             subtext="In rider wallets"
             icon={CreditCard}
             variant="warning"
             onClick={() => navigate('/delivery')}
           />
 
-          {/* 5. Delivery Agents Active (NEW) */}
+          {/* 5. Delivery Agents Active */}
           <StatCard
             title="Active Delivery Agents"
             value={`${activeAgentsCount} Riders`}
-            subtext="3 delivery runs active"
+            subtext="Fleet riders active"
             icon={UserCheck}
             variant="info"
             onClick={() => navigate('/delivery')}
@@ -229,7 +256,7 @@ export const DashboardPage = () => {
           {/* 6. Pending Orders */}
           <StatCard
             title="Pending Orders"
-            value="19"
+            value={`${pendingCount}`}
             subtext="Awaiting review"
             icon={Clock}
             variant="warning"
@@ -239,7 +266,7 @@ export const DashboardPage = () => {
           {/* 7. Waiting for Packing */}
           <StatCard
             title="Waiting Packing"
-            value="8"
+            value={`${waitingPackingCount}`}
             subtext="Ready for picking"
             icon={Boxes}
             variant="default"
@@ -249,7 +276,7 @@ export const DashboardPage = () => {
           {/* 8. Packed Orders */}
           <StatCard
             title="Packed Orders"
-            value="14"
+            value={`${packedCount}`}
             subtext="Invoices printed"
             icon={PackageCheck}
             variant="default"
@@ -259,7 +286,7 @@ export const DashboardPage = () => {
           {/* 9. Ready to Ship */}
           <StatCard
             title="Ready to Ship"
-            value="9"
+            value={`${readyToShipCount}`}
             subtext="In dispatch hub"
             icon={Truck}
             variant="info"
@@ -269,8 +296,8 @@ export const DashboardPage = () => {
           {/* 10. Out for Delivery */}
           <StatCard
             title="Out for Delivery"
-            value="12"
-            subtext="With 3 riders"
+            value={`${outForDeliveryCount}`}
+            subtext="Dispatched runs"
             icon={Truck}
             variant="info"
             onClick={() => navigate('/delivery')}
@@ -280,8 +307,8 @@ export const DashboardPage = () => {
           {/* 11. Delivered */}
           <StatCard
             title="Delivered"
-            value="42"
-            change="100% on-time"
+            value={`${deliveredCount}`}
+            change={deliveredCount > 0 ? "Handed over" : "0 delivered"}
             changeType="positive"
             icon={CheckCircle2}
             variant="primary"
@@ -291,8 +318,8 @@ export const DashboardPage = () => {
           {/* 12. Cancelled */}
           <StatCard
             title="Cancelled"
-            value="2"
-            change="2.3% rate"
+            value={`${cancelledCount}`}
+            change="Cancelled orders"
             changeType="neutral"
             icon={PackageX}
             variant="danger"
@@ -302,8 +329,8 @@ export const DashboardPage = () => {
           {/* 13. Returned */}
           <StatCard
             title="Returned"
-            value="1"
-            subtext="Damage claim"
+            value={`${returnedCount}`}
+            subtext="Return claims"
             icon={RotateCcw}
             variant="warning"
             onClick={() => navigate('/orders')}
@@ -312,7 +339,7 @@ export const DashboardPage = () => {
           {/* 14. Low Stock */}
           <StatCard
             title="Low Stock"
-            value={`${metrics?.lowStockCount || 3} Items`}
+            value={`${metrics?.lowStockCount || 0} Items`}
             change="Below safety"
             changeType="negative"
             icon={AlertTriangle}
@@ -323,7 +350,7 @@ export const DashboardPage = () => {
           {/* 15. Out of Stock */}
           <StatCard
             title="Out of Stock"
-            value={`${metrics?.outOfStockCount || 1} Items`}
+            value={`${metrics?.outOfStockCount || 0} Items`}
             change="Immediate reorder"
             changeType="negative"
             icon={AlertOctagon}
@@ -334,7 +361,7 @@ export const DashboardPage = () => {
       </div>
 
       {/* Analytics Charts & Revenue Performance */}
-      <DashboardCharts products={products} />
+      <DashboardCharts products={products} orders={orders} />
 
       {/* Live Recent Widgets: Orders Feed, Customer Requests & Stock Updates */}
       <DashboardRecentWidgets
@@ -352,11 +379,17 @@ export const DashboardPage = () => {
         }}
       />
 
-      <ProductFormModal
-        isOpen={addProductOpen}
-        onClose={() => setAddProductOpen(false)}
-        onSubmit={handleCreateProductSubmit}
-      />
+      <ModalErrorBoundary
+        resetKey={addProductOpen ? 'open' : 'closed'}
+        onReset={() => setAddProductOpen(false)}
+      >
+        <ProductFormModal
+          isOpen={addProductOpen}
+          onClose={() => setAddProductOpen(false)}
+          onSubmit={handleCreateProductSubmit}
+          isSubmitting={isSubmitting}
+        />
+      </ModalErrorBoundary>
     </div>
   );
 };

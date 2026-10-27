@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Layers,
   Image as ImageIcon,
@@ -10,12 +10,14 @@ import {
   Trash2,
   RefreshCw,
   AlertCircle,
-  QrCode
+  QrCode,
+  Zap
 } from 'lucide-react';
 import { FormModal } from '../common/FormModal';
 import { ImageUploader } from '../common/ImageUploader';
 import { VideoUploader } from '../common/VideoUploader';
 import { INITIAL_CATEGORIES, INITIAL_BRANDS } from '../../data/grocerySeedData';
+import { getAllCategories } from '../../firebase/categoryService';
 import { formatCurrency } from '../../utils/formatters';
 
 const TABS = [
@@ -34,11 +36,40 @@ export const ProductFormModal = ({
   isSubmitting = false
 }) => {
   const [activeTab, setActiveTab] = useState('basic');
+  const [categories, setCategories] = useState([]);
+
+  // Load live categories strictly from Firestore / LocalStorage
+  useEffect(() => {
+    let isMounted = true;
+    const fetchCats = async () => {
+      try {
+        const liveCats = await getAllCategories();
+        if (isMounted && Array.isArray(liveCats)) {
+          setCategories(liveCats);
+          if (!initialData && liveCats.length > 0) {
+            setFormData((prev) => ({
+              ...prev,
+              categoryId: prev.categoryId && liveCats.some(c => c.id === prev.categoryId) ? prev.categoryId : liveCats[0].id,
+              categoryName: prev.categoryName && liveCats.some(c => c.name === prev.categoryName) ? prev.categoryName : liveCats[0].name,
+              subCategory: prev.subCategory || (liveCats[0].subcategories?.[0] || '')
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load live categories:', err);
+      }
+    };
+    if (isOpen) {
+      fetchCats();
+    }
+    return () => { isMounted = false; };
+  }, [isOpen, initialData]);
 
   // Form State
   const [formData, setFormData] = useState({
     name: '',
     tamilName: '',
+    nameTamil: '',
     categoryId: 'cat-spices',
     categoryName: 'Spices & Masala Powders',
     subCategory: 'Chilli & Coriander Powders',
@@ -51,6 +82,11 @@ export const ProductFormModal = ({
     tags: '',
     hsnCode: '09103030',
     gstRate: 5,
+    fssaiLicense: '',
+    fssaiNumber: '',
+    rack: '',
+    shelf: '',
+    bin: '',
     status: 'active',
     isFeatured: false,
     isBestSeller: false,
@@ -58,18 +94,21 @@ export const ProductFormModal = ({
     isOffer: false,
     rankingScore: 80,
     imageUrl: '',
+    frontImageUrl: '',
+    backImageUrl: '',
+    videoUrl: '',
     variants: [
       {
         id: 'var-temp-1',
-        name: '500g Standard Pack',
+        name: '500g Pack',
         weight: 500,
         unit: 'g',
         sku: 'SKU-500G',
         barcode: '8901234567890',
-        purchasePrice: 100,
-        mrp: 140,
-        sellingPrice: 120,
-        stock: 50,
+        purchasePrice: 90,
+        mrp: 130,
+        sellingPrice: 115,
+        stock: 40,
         safetyStock: 15,
         batchNumber: 'B-2026-01',
         expiryDate: '2027-12-31'
@@ -79,21 +118,90 @@ export const ProductFormModal = ({
 
   useEffect(() => {
     if (initialData) {
+      const img = initialData.frontImageUrl || initialData.imageUrl || initialData.image || (Array.isArray(initialData.imageUrls) ? initialData.imageUrls[0] : '') || '';
+      const fssaiVal = initialData.fssaiLicense || initialData.fssaiNumber || '';
+
+      const matchedCat = (categories || []).find(
+        (c) => c && (c.id === initialData.categoryId || c.name === initialData.categoryName || c.name === initialData.category || c.id === initialData.category)
+      );
+
+      const rawList = Array.isArray(initialData.variants) && initialData.variants.length > 0
+        ? initialData.variants
+        : Array.isArray(initialData.options) && initialData.options.length > 0
+        ? initialData.options
+        : [initialData];
+
+      const parsedVariants = rawList.map((v, idx) => {
+        const item = typeof v === 'object' && v !== null ? v : {};
+        const rawS = item.sellingPrice ?? item.price ?? item.offerPrice ?? initialData?.sellingPrice ?? initialData?.price ?? 0;
+        const rawM = item.mrp ?? item.originalPrice ?? initialData?.mrp ?? initialData?.price ?? rawS;
+        const sPrice = isNaN(Number(rawS)) ? 0 : Number(rawS);
+        const mPrice = isNaN(Number(rawM)) ? sPrice : Number(rawM);
+        const finalM = mPrice >= sPrice ? mPrice : sPrice;
+
+        return {
+          id: String(item.id || `var-${initialData?.id || Date.now()}-${idx}`),
+          name: String(item.name || item.unit || item.unitSize || (item.weight ? `${item.weight}g Pack` : 'Standard Pack')),
+          weight: isNaN(Number(item.weight)) ? 500 : Number(item.weight),
+          unit: String(item.unit || 'g'),
+          sku: String(item.sku || initialData?.sku || `SKU-${initialData?.id || '100'}-${idx}`),
+          barcode: String(item.barcode || initialData?.barcode || ''),
+          purchasePrice: isNaN(Number(item.purchasePrice)) ? 90 : Number(item.purchasePrice),
+          mrp: finalM,
+          sellingPrice: sPrice,
+          stock: isNaN(Number(item.stock ?? initialData?.stock)) ? 10 : Number(item.stock ?? initialData?.stock),
+          safetyStock: isNaN(Number(item.safetyStock)) ? 15 : Number(item.safetyStock),
+          batchNumber: String(item.batchNumber || 'B-2026-01'),
+          expiryDate: String(item.expiryDate || '2027-12-31')
+        };
+      });
+
+      const tagsFormatted = Array.isArray(initialData.tags)
+        ? initialData.tags.map(t => typeof t === 'string' ? t : String(t?.name || t?.label || '')).filter(Boolean).join(', ')
+        : (typeof initialData.tags === 'string' ? initialData.tags : '');
+
       setFormData({
-        ...initialData,
-        frontImageUrl: initialData.frontImageUrl || initialData.imageUrl || '',
-        backImageUrl: initialData.backImageUrl || '',
-        videoUrl: initialData.videoUrl || '',
-        imageUrl: initialData.imageUrl || initialData.frontImageUrl || '',
-        tags: Array.isArray(initialData.tags) ? initialData.tags.join(', ') : initialData.tags || ''
+        id: initialData.id,
+        name: String(initialData.name || initialData.productName || initialData.title || ''),
+        tamilName: String(initialData.tamilName || initialData.nameTamil || ''),
+        nameTamil: String(initialData.nameTamil || initialData.tamilName || ''),
+        categoryId: String(matchedCat ? matchedCat.id : (initialData.categoryId || initialData.categoryName || initialData.category || categories[0]?.id || '')),
+        categoryName: String(matchedCat ? matchedCat.name : (initialData.categoryName || initialData.category || categories[0]?.name || '')),
+        subCategory: String(initialData.subCategory || initialData.subcategory || ''),
+        brandId: String(initialData.brandId || 'brand-aachi'),
+        brandName: String(initialData.brandName || 'Aachi Masala'),
+        description: typeof initialData.description === 'string' ? initialData.description : '',
+        benefits: typeof initialData.benefits === 'string' ? initialData.benefits : '',
+        ingredients: typeof initialData.ingredients === 'string' ? initialData.ingredients : '',
+        usage: typeof initialData.usage === 'string' ? initialData.usage : '',
+        tags: tagsFormatted,
+        hsnCode: String(initialData.hsnCode || '09103030'),
+        gstRate: isNaN(Number(initialData.gstRate)) ? 5 : Number(initialData.gstRate),
+        fssaiLicense: String(fssaiVal),
+        fssaiNumber: String(fssaiVal),
+        rack: String(initialData.rack || ''),
+        shelf: String(initialData.shelf || ''),
+        bin: String(initialData.bin || ''),
+        status: String(initialData.status || 'active'),
+        isFeatured: Boolean(initialData.isFeatured),
+        isBestSeller: Boolean(initialData.isBestSeller),
+        isNew: Boolean(initialData.isNew),
+        isOffer: Boolean(initialData.isOffer),
+        rankingScore: isNaN(Number(initialData.rankingScore)) ? 80 : Number(initialData.rankingScore),
+        frontImageUrl: String(img),
+        backImageUrl: String(initialData.backImageUrl || ''),
+        videoUrl: String(initialData.videoUrl || ''),
+        imageUrl: String(img),
+        variants: parsedVariants
       });
     } else {
       setFormData({
         name: '',
         tamilName: '',
-        categoryId: 'cat-spices',
-        categoryName: 'Spices & Masala Powders',
-        subCategory: 'Chilli & Coriander Powders',
+        nameTamil: '',
+        categoryId: categories[0]?.id || 'cat-spices',
+        categoryName: categories[0]?.name || 'Spices & Masala Powders',
+        subCategory: categories[0]?.subcategories?.[0] || '',
         brandId: 'brand-aachi',
         brandName: 'Aachi Masala',
         description: '',
@@ -103,6 +211,11 @@ export const ProductFormModal = ({
         tags: '',
         hsnCode: '09103030',
         gstRate: 5,
+        fssaiLicense: '',
+        fssaiNumber: '',
+        rack: '',
+        shelf: '',
+        bin: '',
         status: 'active',
         isFeatured: false,
         isBestSeller: false,
@@ -133,18 +246,45 @@ export const ProductFormModal = ({
       });
     }
     setActiveTab('basic');
-  }, [initialData, isOpen]);
+  }, [initialData, isOpen, categories]);
 
   if (!isOpen) return null;
 
+  const updatePrimaryVariant = (field, value) => {
+    setFormData((prev) => {
+      const variants = [...(prev.variants || [])];
+      if (variants.length === 0) {
+        variants.push({
+          id: `var-${Date.now()}`,
+          name: '500g Pack',
+          weight: 500,
+          unit: 'g',
+          sku: `SKU-${Math.floor(1000 + Math.random() * 9000)}`,
+          barcode: `890${Math.floor(1000000000 + Math.random() * 9000000000)}`,
+          purchasePrice: 90,
+          mrp: 130,
+          sellingPrice: 115,
+          stock: 40,
+          safetyStock: 15
+        });
+      }
+      variants[0] = { ...variants[0], [field]: value };
+      return { ...prev, variants };
+    });
+  };
+
   // Handle Category changes
   const handleCategoryChange = (catId) => {
-    const found = INITIAL_CATEGORIES.find((c) => c.id === catId);
+    const found = categories.find((c) => c.id === catId || c.name === catId);
+    let subs = found?.subcategories || [];
+    if (typeof subs === 'string') {
+      subs = subs.split(',').map((s) => s.trim()).filter(Boolean);
+    }
     setFormData((prev) => ({
       ...prev,
-      categoryId: catId,
-      categoryName: found ? found.name : prev.categoryName,
-      subCategory: found?.subcategories?.[0] || ''
+      categoryId: found ? found.id : catId,
+      categoryName: found ? found.name : catId,
+      subCategory: Array.isArray(subs) && subs.length > 0 ? subs[0] : ''
     }));
   };
 
@@ -166,7 +306,7 @@ export const ProductFormModal = ({
       name: `${weight}${unit} Pack`,
       weight: Number(weight),
       unit,
-      sku: `${formData.brandName.slice(0, 3).toUpperCase()}-${weight}${unit}-${randomSuffix}`,
+      sku: `${(formData.brandName || 'PRD').slice(0, 3).toUpperCase()}-${weight}${unit}-${randomSuffix}`,
       barcode: `890${Math.floor(1000000000 + Math.random() * 9000000000)}`,
       purchasePrice: 100,
       mrp: 140,
@@ -204,8 +344,18 @@ export const ProductFormModal = ({
   // Form submission
   const handleSubmit = (e) => {
     if (e) e.preventDefault();
+    const primary = formData.variants?.[0] || {};
+    const img = formData.frontImageUrl || formData.imageUrl || '';
     const finalData = {
       ...formData,
+      tamilName: formData.tamilName || formData.nameTamil || '',
+      nameTamil: formData.tamilName || formData.nameTamil || '',
+      sellingPrice: Number(primary.sellingPrice ?? 115),
+      price: Number(primary.sellingPrice ?? 115),
+      mrp: Number(primary.mrp ?? 130),
+      stock: Number(primary.stock ?? 40),
+      imageUrl: img,
+      frontImageUrl: img,
       tags: typeof formData.tags === 'string'
         ? formData.tags.split(',').map((t) => t.trim()).filter(Boolean)
         : formData.tags
@@ -213,10 +363,22 @@ export const ProductFormModal = ({
     onSubmit(finalData);
   };
 
-  const selectedCategory = INITIAL_CATEGORIES.find((c) => c.id === formData.categoryId);
+  const selectedCategory = (categories || []).find(
+    (c) => c && (c.id === formData.categoryId || c.name === formData.categoryId || c.name === formData.categoryName || c.id === formData.categoryName)
+  );
+
+  const subcategoryOptions = useMemo(() => {
+    if (!selectedCategory) return [];
+    let subs = selectedCategory.subcategories;
+    if (typeof subs === 'string') {
+      subs = subs.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    return Array.isArray(subs) ? subs : [];
+  }, [selectedCategory]);
 
   // Pricing calculations for first variant
-  const primaryVar = formData.variants[0] || {};
+  const safeVariants = Array.isArray(formData?.variants) ? formData.variants : [];
+  const primaryVar = safeVariants[0] || {};
   const discountAmount = Math.max(0, (primaryVar.mrp || 0) - (primaryVar.sellingPrice || 0));
   const discountPercent = primaryVar.mrp > 0 ? Math.round((discountAmount / primaryVar.mrp) * 100) : 0;
   const grossProfit = Math.max(0, (primaryVar.sellingPrice || 0) - (primaryVar.purchasePrice || 0));
@@ -226,7 +388,7 @@ export const ProductFormModal = ({
     <FormModal
       isOpen={isOpen}
       onClose={onClose}
-      title={initialData ? `Edit Product: ${initialData.name}` : 'Create New Grocery Product'}
+      title={initialData ? `Edit Product: ${initialData.name || initialData.productName || 'Grocery Product'}` : 'Create New Grocery Product'}
       subtitle="Complete catalog metadata, pack size variants, barcodes, and inventory rules."
       maxWidth="max-w-4xl"
       onSubmit={handleSubmit}
@@ -260,6 +422,105 @@ export const ProductFormModal = ({
         {/* Tab 1: Basic Info */}
         {activeTab === 'basic' && (
           <div className="space-y-4 animate-in fade-in">
+            {/* Quick Price & Image Card */}
+            <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-2xl space-y-3 shadow-sm">
+              <div className="flex items-center justify-between border-b border-emerald-200/80 pb-2">
+                <span className="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-emerald-600 fill-emerald-500" />
+                  Primary Variant Pricing & Main Image (Quick Setup)
+                </span>
+                <span className="text-[10px] uppercase font-bold bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded">
+                  Required Details
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <label className="input-label font-bold text-emerald-900">
+                    Selling Price (₹) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={primaryVar.sellingPrice ?? ''}
+                    onChange={(e) => updatePrimaryVariant('sellingPrice', Number(e.target.value))}
+                    placeholder="e.g. 115"
+                    className="input-text text-xs font-mono font-bold text-emerald-900 bg-white border-emerald-300 focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="input-label font-semibold text-slate-800">
+                    MRP Price (₹) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={primaryVar.mrp ?? ''}
+                    onChange={(e) => updatePrimaryVariant('mrp', Number(e.target.value))}
+                    placeholder="e.g. 130"
+                    className="input-text text-xs font-mono bg-white border-slate-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="input-label font-semibold text-slate-800">Available Stock Qty</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={primaryVar.stock ?? ''}
+                    onChange={(e) => updatePrimaryVariant('stock', Number(e.target.value))}
+                    placeholder="e.g. 50"
+                    className="input-text text-xs font-mono bg-white border-slate-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="input-label font-semibold text-slate-800">Pack Size Label</label>
+                  <input
+                    type="text"
+                    value={primaryVar.name ?? ''}
+                    onChange={(e) => updatePrimaryVariant('name', e.target.value)}
+                    placeholder="e.g. 500g Pack"
+                    className="input-text text-xs bg-white border-slate-300"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-emerald-200/60 grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                <ImageUploader
+                  label="Product Front Image (Photo)"
+                  value={formData.frontImageUrl || formData.imageUrl}
+                  onChange={({ previewUrl }) => setFormData((prev) => ({
+                    ...prev,
+                    frontImageUrl: previewUrl,
+                    imageUrl: previewUrl
+                  }))}
+                  onRemove={() => setFormData((prev) => ({
+                    ...prev,
+                    frontImageUrl: '',
+                    imageUrl: ''
+                  }))}
+                />
+                <div>
+                  <label className="input-label text-[11px] text-slate-700">Or Paste Front Image Direct URL</label>
+                  <input
+                    type="url"
+                    value={formData.frontImageUrl || formData.imageUrl || ''}
+                    onChange={(e) => setFormData((prev) => ({
+                      ...prev,
+                      frontImageUrl: e.target.value,
+                      imageUrl: e.target.value
+                    }))}
+                    placeholder="https://images.unsplash.com/photo-..."
+                    className="input-text text-xs font-mono bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="input-label">
@@ -280,7 +541,7 @@ export const ProductFormModal = ({
                 <input
                   type="text"
                   value={formData.tamilName}
-                  onChange={(e) => setFormData({ ...formData, tamilName: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, tamilName: e.target.value, nameTamil: e.target.value })}
                   placeholder="e.g. ஆச்சி மஞ்சள் தூள்"
                   className="input-text text-xs font-sans"
                 />
@@ -289,31 +550,52 @@ export const ProductFormModal = ({
               <div>
                 <label className="input-label">Master Category</label>
                 <select
-                  value={formData.categoryId}
+                  value={formData.categoryId || ''}
                   onChange={(e) => handleCategoryChange(e.target.value)}
                   className="input-text text-xs"
                 >
-                  {INITIAL_CATEGORIES.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
+                  {categories.length === 0 && (
+                    <option value={formData.categoryId || ''}>
+                      {formData.categoryName || formData.categoryId || 'General'}
+                    </option>
+                  )}
+                  {categories.map((cat) => (
+                    <option key={cat.id || cat.name} value={cat.id}>
                       {cat.name}
                     </option>
                   ))}
+                  {categories.length > 0 && formData.categoryId && !categories.some(c => c.id === formData.categoryId || c.name === formData.categoryId) && (
+                    <option value={formData.categoryId}>
+                      {formData.categoryName || formData.categoryId}
+                    </option>
+                  )}
                 </select>
               </div>
 
               <div>
                 <label className="input-label">Sub-Category</label>
-                <select
-                  value={formData.subCategory}
-                  onChange={(e) => setFormData({ ...formData, subCategory: e.target.value })}
-                  className="input-text text-xs"
-                >
-                  {selectedCategory?.subcategories?.map((sub) => (
-                    <option key={sub} value={sub}>
-                      {sub}
-                    </option>
-                  ))}
-                </select>
+                {subcategoryOptions.length > 0 ? (
+                  <select
+                    value={formData.subCategory || ''}
+                    onChange={(e) => setFormData({ ...formData, subCategory: e.target.value })}
+                    className="input-text text-xs"
+                  >
+                    <option value="">-- Select Sub-Category --</option>
+                    {subcategoryOptions.map((sub) => (
+                      <option key={sub} value={sub}>
+                        {sub}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={formData.subCategory || ''}
+                    onChange={(e) => setFormData({ ...formData, subCategory: e.target.value })}
+                    placeholder="e.g. Powders, Whole Spices, etc."
+                    className="input-text text-xs bg-white border-slate-300"
+                  />
+                )}
               </div>
 
               <div>
@@ -355,7 +637,46 @@ export const ProductFormModal = ({
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <section className="p-4 space-y-3 border rounded-xl border-amber-200 bg-amber-50/60">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900">Storage Location</h4>
+                <p className="mt-0.5 text-[11px] text-slate-500">Record where this product is kept in the store or warehouse.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="input-label">Rack</label>
+                  <input
+                    type="text"
+                    value={formData.rack || ''}
+                    onChange={(e) => setFormData({ ...formData, rack: e.target.value })}
+                    placeholder="e.g. R-01"
+                    className="input-text text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="input-label">Shelf</label>
+                  <input
+                    type="text"
+                    value={formData.shelf || ''}
+                    onChange={(e) => setFormData({ ...formData, shelf: e.target.value })}
+                    placeholder="e.g. S-02"
+                    className="input-text text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="input-label">Bin</label>
+                  <input
+                    type="text"
+                    value={formData.bin || ''}
+                    onChange={(e) => setFormData({ ...formData, bin: e.target.value })}
+                    placeholder="e.g. B-03"
+                    className="input-text text-xs"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="input-label">Ingredients & Composition</label>
                 <input
@@ -376,6 +697,18 @@ export const ProductFormModal = ({
                   placeholder="e.g. Add 1/2 tsp to curries or sambar"
                   className="input-text text-xs"
                 />
+              </div>
+
+              <div>
+                <label className="input-label font-bold text-slate-800">FSSAI License Number</label>
+                <input
+                  type="text"
+                  value={formData.fssaiLicense || formData.fssaiNumber || ''}
+                  onChange={(e) => setFormData({ ...formData, fssaiLicense: e.target.value, fssaiNumber: e.target.value })}
+                  placeholder="e.g. 12421023000456"
+                  className="input-text text-xs font-mono bg-white border-slate-300"
+                />
+                <span className="text-[10px] text-slate-400 block mt-0.5">14-digit FSSAI food safety license</span>
               </div>
             </div>
           </div>
@@ -505,6 +838,67 @@ export const ProductFormModal = ({
         {/* Tab 3: Pricing & Tax */}
         {activeTab === 'pricing' && (
           <div className="space-y-4 animate-in fade-in">
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+              <span className="font-bold text-xs text-slate-900 block border-b border-slate-200 pb-2">
+                Primary Variant Commercial Pricing & Stock
+              </span>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <label className="input-label font-bold text-emerald-800">
+                    Selling Price (₹) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={primaryVar.sellingPrice ?? ''}
+                    onChange={(e) => updatePrimaryVariant('sellingPrice', Number(e.target.value))}
+                    placeholder="e.g. 115"
+                    className="input-text text-xs font-mono font-bold text-emerald-800 bg-white border-emerald-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="input-label">MRP Price (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={primaryVar.mrp ?? ''}
+                    onChange={(e) => updatePrimaryVariant('mrp', Number(e.target.value))}
+                    placeholder="e.g. 130"
+                    className="input-text text-xs font-mono bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="input-label">Cost / Purchase Price (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={primaryVar.purchasePrice ?? ''}
+                    onChange={(e) => updatePrimaryVariant('purchasePrice', Number(e.target.value))}
+                    placeholder="e.g. 90"
+                    className="input-text text-xs font-mono bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="input-label">Stock Quantity</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={primaryVar.stock ?? ''}
+                    onChange={(e) => updatePrimaryVariant('stock', Number(e.target.value))}
+                    placeholder="e.g. 40"
+                    className="input-text text-xs font-mono bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div>
                 <span className="text-slate-400 block mb-0.5">Primary Variant MRP:</span>
@@ -532,7 +926,7 @@ export const ProductFormModal = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="input-label">HSN Commodity Code</label>
                 <input
@@ -557,6 +951,18 @@ export const ProductFormModal = ({
                   <option value={18}>18% (Cleaning & Detergents)</option>
                 </select>
               </div>
+
+              <div>
+                <label className="input-label font-bold text-slate-800">FSSAI License Number</label>
+                <input
+                  type="text"
+                  value={formData.fssaiLicense || formData.fssaiNumber || ''}
+                  onChange={(e) => setFormData({ ...formData, fssaiLicense: e.target.value, fssaiNumber: e.target.value })}
+                  placeholder="e.g. 12421023000456"
+                  className="input-text text-xs font-mono bg-white border-slate-300"
+                />
+                <span className="text-[10px] text-slate-400 block mt-0.5">14-digit FSSAI License</span>
+              </div>
             </div>
           </div>
         )}
@@ -567,7 +973,7 @@ export const ProductFormModal = ({
             {/* Quick pack size buttons */}
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-800">
-                Pack Size Variants ({formData.variants.length})
+                Pack Size Variants ({safeVariants.length})
               </span>
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-slate-400">Quick Add:</span>
@@ -591,7 +997,7 @@ export const ProductFormModal = ({
             </div>
 
             <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
-              {formData.variants.map((v, index) => (
+              {safeVariants.map((v, index) => (
                 <div
                   key={v.id || index}
                   className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs"
@@ -600,7 +1006,7 @@ export const ProductFormModal = ({
                     <span className="font-bold text-slate-800">
                       Variant #{index + 1}: {v.name}
                     </span>
-                    {formData.variants.length > 1 && (
+                    {safeVariants.length > 1 && (
                       <button
                         type="button"
                         onClick={() => handleRemoveVariant(index)}

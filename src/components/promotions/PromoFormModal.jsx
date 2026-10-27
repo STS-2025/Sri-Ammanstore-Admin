@@ -105,7 +105,7 @@ export const PromoFormModal = ({ isOpen, onClose, onSave, promo = null }) => {
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                 Coupon Code *
@@ -151,7 +151,7 @@ export const PromoFormModal = ({ isOpen, onClose, onSave, promo = null }) => {
             {errors.description && <p className="text-[11px] text-rose-600 mt-1">{errors.description}</p>}
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                 {formData.type === 'percentage' ? 'Percentage Value (%)' : 'Discount Amount (₹)'} *
@@ -192,7 +192,7 @@ export const PromoFormModal = ({ isOpen, onClose, onSave, promo = null }) => {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                 Total Redemptions Cap
@@ -220,7 +220,7 @@ export const PromoFormModal = ({ isOpen, onClose, onSave, promo = null }) => {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                 Valid From

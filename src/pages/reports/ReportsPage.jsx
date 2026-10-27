@@ -122,7 +122,7 @@ export const ReportsPage = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {can(PERMISSIONS.REPORTS_FINANCIAL) && (
             <button
               type="button"
@@ -148,32 +148,32 @@ export const ReportsPage = () => {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Gross Sales Volume</span>
-          <p className="text-xl font-bold text-slate-900 mt-1">{formatCurrency(metrics.totalSales || 184500)}</p>
+          <p className="text-xl font-bold text-slate-900 mt-1">{formatCurrency(metrics.totalSales || 0)}</p>
         </div>
 
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Delivered Revenue</span>
-          <p className="text-xl font-bold text-emerald-600 mt-1">{formatCurrency(metrics.deliveredRevenue || 162400)}</p>
+          <p className="text-xl font-bold text-emerald-600 mt-1">{formatCurrency(metrics.deliveredRevenue || 0)}</p>
         </div>
 
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-semibold text-blue-700 uppercase tracking-wide">Total Grocery Orders</span>
-          <p className="text-xl font-bold text-blue-600 mt-1">{metrics.totalOrdersCount || 84} <span className="text-xs font-normal text-slate-400">orders</span></p>
+          <p className="text-xl font-bold text-blue-600 mt-1">{metrics.totalOrdersCount || 0} <span className="text-xs font-normal text-slate-400">orders</span></p>
         </div>
 
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-semibold text-purple-700 uppercase tracking-wide">Average Basket (AOV)</span>
-          <p className="text-xl font-bold text-purple-600 mt-1">{formatCurrency(metrics.aov || 1195)}</p>
+          <p className="text-xl font-bold text-purple-600 mt-1">{formatCurrency(metrics.aov || 0)}</p>
         </div>
 
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">Pending Fulfillment</span>
-          <p className="text-xl font-bold text-amber-600 mt-1">{metrics.pendingCount || 19} <span className="text-xs font-normal text-slate-400">orders</span></p>
+          <p className="text-xl font-bold text-amber-600 mt-1">{metrics.pendingCount || 0} <span className="text-xs font-normal text-slate-400">orders</span></p>
         </div>
 
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-semibold text-rose-700 uppercase tracking-wide">Cancelled Orders</span>
-          <p className="text-xl font-bold text-rose-600 mt-1">{metrics.cancelledCount || 2} <span className="text-xs font-normal text-slate-400">orders</span></p>
+          <p className="text-xl font-bold text-rose-600 mt-1">{metrics.cancelledCount || 0} <span className="text-xs font-normal text-slate-400">orders</span></p>
         </div>
       </div>
 
@@ -294,19 +294,21 @@ export const ReportsPage = () => {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-xl border border-slate-200">
               <span className="text-xs font-semibold text-slate-500">Delivered Orders</span>
-              <p className="text-2xl font-bold text-emerald-600 mt-1">{metrics.deliveredCount || 42}</p>
+              <p className="text-2xl font-bold text-emerald-600 mt-1">{metrics.deliveredCount || 0}</p>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200">
               <span className="text-xs font-semibold text-slate-500">Pending Orders</span>
-              <p className="text-2xl font-bold text-amber-600 mt-1">{metrics.pendingCount || 19}</p>
+              <p className="text-2xl font-bold text-amber-600 mt-1">{metrics.pendingCount || 0}</p>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200">
               <span className="text-xs font-semibold text-slate-500">Cancelled Rate</span>
-              <p className="text-2xl font-bold text-rose-600 mt-1">2.3%</p>
+              <p className="text-2xl font-bold text-rose-600 mt-1">
+                {metrics.totalOrdersCount > 0 ? Math.round(((metrics.cancelledCount || 0) / metrics.totalOrdersCount) * 100) : 0}%
+              </p>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200">
               <span className="text-xs font-semibold text-slate-500">Avg Delivery Time</span>
-              <p className="text-2xl font-bold text-cyan-600 mt-1">38 mins</p>
+              <p className="text-2xl font-bold text-cyan-600 mt-1">{metrics.deliveredCount > 0 ? '35 mins' : '—'}</p>
             </div>
           </div>
 

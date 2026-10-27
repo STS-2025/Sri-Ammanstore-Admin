@@ -10,12 +10,19 @@ import {
   createBanner, 
   updateBanner, 
   deleteBanner,
+  clearAllBanners,
   getAllAnnouncements,
   saveAnnouncement,
+  deleteAnnouncement,
+  clearAllAnnouncements,
   getAllCampaigns,
   createAndSendCampaign,
+  deleteCampaign,
+  clearAllCampaigns,
   getNotificationTemplates,
-  updateNotificationTemplate
+  updateNotificationTemplate,
+  deleteNotificationTemplate,
+  clearAllNotificationTemplates
 } from '../../firebase/marketingService';
 import { getAllCustomers } from '../../firebase/customerService';
 import { BannerFormModal } from '../../components/marketing/BannerFormModal';
@@ -98,6 +105,16 @@ export const MarketingPage = () => {
     }
   };
 
+  const handleClearAllBanners = async () => {
+    if (!window.confirm('Are you sure you want to clear ALL homepage banners?')) return;
+    try {
+      await clearAllBanners(currentUser);
+      await loadAllMarketingData();
+    } catch (err) {
+      alert(`Error clearing banners: ${err.message}`);
+    }
+  };
+
   const handleToggleBannerStatus = async (banner) => {
     const nextStatus = banner.status === 'active' ? 'paused' : 'active';
     try {
@@ -125,6 +142,26 @@ export const MarketingPage = () => {
     }
   };
 
+  const handleDeleteAnnouncement = async (annId) => {
+    if (!window.confirm('Are you sure you want to delete this announcement bar?')) return;
+    try {
+      await deleteAnnouncement(annId, currentUser);
+      await loadAllMarketingData();
+    } catch (err) {
+      alert(`Error deleting announcement: ${err.message}`);
+    }
+  };
+
+  const handleClearAllAnnouncements = async () => {
+    if (!window.confirm('Are you sure you want to clear ALL announcement bars?')) return;
+    try {
+      await clearAllAnnouncements(currentUser);
+      await loadAllMarketingData();
+    } catch (err) {
+      alert(`Error clearing announcements: ${err.message}`);
+    }
+  };
+
   const handleToggleAnnouncementActive = async (ann) => {
     try {
       await saveAnnouncement({ ...ann, isActive: !ann.isActive }, currentUser);
@@ -142,6 +179,47 @@ export const MarketingPage = () => {
       await loadAllMarketingData();
     } catch (err) {
       alert(`Error launching campaign: ${err.message}`);
+    }
+  };
+
+  const handleDeleteCampaign = async (campId) => {
+    if (!window.confirm('Are you sure you want to delete this broadcast record?')) return;
+    try {
+      await deleteCampaign(campId, currentUser);
+      await loadAllMarketingData();
+    } catch (err) {
+      alert(`Error deleting campaign: ${err.message}`);
+    }
+  };
+
+  const handleClearAllCampaigns = async () => {
+    if (!window.confirm('Are you sure you want to clear ALL broadcast campaign logs?')) return;
+    try {
+      await clearAllCampaigns(currentUser);
+      await loadAllMarketingData();
+    } catch (err) {
+      alert(`Error clearing campaigns: ${err.message}`);
+    }
+  };
+
+  // Template Actions
+  const handleDeleteTemplate = async (tmplId) => {
+    if (!window.confirm('Are you sure you want to delete this notification template?')) return;
+    try {
+      await deleteNotificationTemplate(tmplId, currentUser);
+      await loadAllMarketingData();
+    } catch (err) {
+      alert(`Error deleting template: ${err.message}`);
+    }
+  };
+
+  const handleClearAllTemplates = async () => {
+    if (!window.confirm('Are you sure you want to clear ALL notification templates?')) return;
+    try {
+      await clearAllNotificationTemplates(currentUser);
+      await loadAllMarketingData();
+    } catch (err) {
+      alert(`Error clearing templates: ${err.message}`);
     }
   };
 
@@ -174,41 +252,88 @@ export const MarketingPage = () => {
 
         <div className="flex items-center gap-2">
           {activeTab === 'banners' && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedBannerForEdit(null);
-                setIsBannerModalOpen(true);
-              }}
-              className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              Add Banner Creative
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBannerForEdit(null);
+                  setIsBannerModalOpen(true);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                Add Banner Creative
+              </button>
+              {banners.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearAllBanners}
+                  className="px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Clear All Banners
+                </button>
+              )}
+            </>
           )}
 
           {activeTab === 'announcements' && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedAnnouncementForEdit(null);
-                setIsAnnouncementModalOpen(true);
-              }}
-              className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              Add Announcement
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedAnnouncementForEdit(null);
+                  setIsAnnouncementModalOpen(true);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                Add Announcement
+              </button>
+              {announcements.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearAllAnnouncements}
+                  className="px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Clear All Announcements
+                </button>
+              )}
+            </>
           )}
 
           {activeTab === 'campaigns' && (
+            <>
+              <button
+                type="button"
+                onClick={() => setIsCampaignModalOpen(true)}
+                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <Send className="w-4 h-4" />
+                New Broadcast Campaign
+              </button>
+              {campaigns.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearAllCampaigns}
+                  className="px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Clear All Broadcasts
+                </button>
+              )}
+            </>
+          )}
+
+          {activeTab === 'templates' && templates.length > 0 && (
             <button
               type="button"
-              onClick={() => setIsCampaignModalOpen(true)}
-              className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+              onClick={handleClearAllTemplates}
+              className="px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5"
             >
-              <Send className="w-4 h-4" />
-              New Broadcast Campaign
+              <Trash2 className="w-4 h-4" />
+              Clear All Templates
             </button>
           )}
 
@@ -276,107 +401,117 @@ export const MarketingPage = () => {
       {/* TAB 1: Banners & Creatives */}
       {activeTab === 'banners' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {banners.map(banner => (
-              <div
-                key={banner.id}
-                className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs hover:border-slate-300 transition-all flex flex-col justify-between"
-              >
-                <div>
-                  {/* Banner Image Preview Header */}
-                  <div className="relative h-44 bg-slate-100 overflow-hidden group">
-                    <img
-                      src={banner.desktopImageUrl}
-                      alt={banner.title}
-                      className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
-                    />
-                    <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-900/80 text-white backdrop-blur-xs uppercase">
-                        {banner.placement.replace('_', ' ')}
-                      </span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white text-slate-800 shadow-xs">
-                        Priority #{banner.priority}
-                      </span>
+          {banners.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500 space-y-3">
+              <ImageIcon className="w-10 h-10 mx-auto text-slate-300" />
+              <h3 className="text-base font-bold text-slate-800">No Homepage Banners Found</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                All demo banners have been cleared. Click "Add Banner Creative" above to add new hero graphics.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {banners.map(banner => (
+                <div
+                  key={banner.id}
+                  className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs hover:border-slate-300 transition-all flex flex-col justify-between"
+                >
+                  <div>
+                    {/* Banner Image Preview Header */}
+                    <div className="relative h-44 bg-slate-100 overflow-hidden group">
+                      <img
+                        src={banner.desktopImageUrl || banner.imageUrl}
+                        alt={banner.title}
+                        className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
+                      />
+                      <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-900/80 text-white backdrop-blur-xs uppercase">
+                          {banner.placement?.replace('_', ' ') || 'HOMEPAGE'}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white text-slate-800 shadow-xs">
+                          Priority #{banner.priority || 1}
+                        </span>
+                      </div>
+
+                      <div className="absolute top-2.5 right-2.5">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                          banner.status === 'active' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-white'
+                        }`}>
+                          {banner.status || 'active'}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPreview(banner)}
+                        className="absolute bottom-2.5 right-2.5 px-2.5 py-1 bg-slate-900/80 hover:bg-slate-900 text-white text-[11px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 shadow-md transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        Preview Devices
+                      </button>
                     </div>
 
-                    <div className="absolute top-2.5 right-2.5">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                        banner.status === 'active' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-white'
-                      }`}>
-                        {banner.status}
-                      </span>
-                    </div>
+                    {/* Banner Details Body */}
+                    <div className="p-4 space-y-2">
+                      <h3 className="text-sm font-bold text-slate-900 line-clamp-1">{banner.title}</h3>
+                      {banner.tamilTitle && (
+                        <p className="text-xs text-slate-500 font-medium line-clamp-1">{banner.tamilTitle}</p>
+                      )}
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenPreview(banner)}
-                      className="absolute bottom-2.5 right-2.5 px-2.5 py-1 bg-slate-900/80 hover:bg-slate-900 text-white text-[11px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 shadow-md transition-colors"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      Preview Devices
-                    </button>
+                      <div className="text-xs text-slate-500 space-y-1 pt-1">
+                        <div className="flex justify-between">
+                          <span>Target Link:</span>
+                          <span className="font-semibold text-slate-700 truncate max-w-[180px]">{banner.redirectUrl}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Schedule:</span>
+                          <span className="text-slate-600">{banner.startDate} to {banner.endDate}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>User Clicks:</span>
+                          <span className="font-bold text-emerald-700">{banner.clicks || 0} clicks</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Banner Details Body */}
-                  <div className="p-4 space-y-2">
-                    <h3 className="text-sm font-bold text-slate-900 line-clamp-1">{banner.title}</h3>
-                    {banner.tamilTitle && (
-                      <p className="text-xs text-slate-500 font-medium line-clamp-1">{banner.tamilTitle}</p>
-                    )}
+                  {/* Footer Controls */}
+                  <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleBannerStatus(banner)}
+                      className={`font-semibold ${banner.status === 'active' ? 'text-amber-700 hover:text-amber-800' : 'text-emerald-700 hover:text-emerald-800'}`}
+                    >
+                      {banner.status === 'active' ? 'Pause Banner' : 'Activate'}
+                    </button>
 
-                    <div className="text-xs text-slate-500 space-y-1 pt-1">
-                      <div className="flex justify-between">
-                        <span>Target Link:</span>
-                        <span className="font-semibold text-slate-700 truncate max-w-[180px]">{banner.redirectUrl}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Schedule:</span>
-                        <span className="text-slate-600">{banner.startDate} to {banner.endDate}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>User Clicks:</span>
-                        <span className="font-bold text-emerald-700">{banner.clicks || 0} clicks</span>
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedBannerForEdit(banner);
+                          setIsBannerModalOpen(true);
+                        }}
+                        className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-lg transition-colors"
+                        title="Edit Creative"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteBanner(banner.id)}
+                        className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        title="Delete Banner"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 </div>
-
-                {/* Footer Controls */}
-                <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleBannerStatus(banner)}
-                    className={`font-semibold ${banner.status === 'active' ? 'text-amber-700 hover:text-amber-800' : 'text-emerald-700 hover:text-emerald-800'}`}
-                  >
-                    {banner.status === 'active' ? 'Pause Banner' : 'Activate'}
-                  </button>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedBannerForEdit(banner);
-                        setIsBannerModalOpen(true);
-                      }}
-                      className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-lg transition-colors"
-                      title="Edit Creative"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteBanner(banner.id)}
-                      className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                      title="Delete Banner"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -389,56 +524,73 @@ export const MarketingPage = () => {
               <p className="text-xs text-slate-500">Notice messages scrolling across top of customer store during festive offers and delivery updates.</p>
             </div>
 
-            <div className="space-y-4">
-              {announcements.map(ann => (
-                <div key={ann.id} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-white">
-                  {/* Live Render Strip */}
-                  <div
-                    className="p-3 rounded-lg font-medium text-xs flex items-center justify-between shadow-xs"
-                    style={{ backgroundColor: ann.bgColor, color: ann.textColor }}
-                  >
-                    <span className="truncate max-w-[80%]">{ann.text}</span>
-                    <span className="text-[10px] opacity-80">{ann.speedSeconds}s scroll</span>
-                  </div>
-
-                  {ann.tamilText && (
-                    <p className="text-xs text-slate-600 font-medium">தமிழ்: {ann.tamilText}</p>
-                  )}
-
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1 border-t border-slate-100">
-                    <div className="flex items-center gap-4 text-slate-500">
-                      <span>Link: <strong className="text-slate-800">{ann.linkUrl}</strong></span>
-                      <span>Schedule: <strong className="text-slate-800">{ann.startDate} to {ann.endDate}</strong></span>
+            {announcements.length === 0 ? (
+              <div className="border border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-500 space-y-2">
+                <Megaphone className="w-8 h-8 mx-auto text-slate-300" />
+                <h4 className="text-sm font-bold text-slate-800">No Announcement Tickers Active</h4>
+                <p className="text-xs text-slate-400">All demo announcement items have been removed. Click "Add Announcement" above to add store updates.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {announcements.map(ann => (
+                  <div key={ann.id} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-white">
+                    {/* Live Render Strip */}
+                    <div
+                      className="p-3 rounded-lg font-medium text-xs flex items-center justify-between shadow-xs"
+                      style={{ backgroundColor: ann.bgColor || '#0f5132', color: ann.textColor || '#ffffff' }}
+                    >
+                      <span className="truncate max-w-[80%]">{ann.text}</span>
+                      <span className="text-[10px] opacity-80">{ann.speedSeconds || 15}s scroll</span>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleAnnouncementActive(ann)}
-                        className={`text-xs font-bold px-2.5 py-1 rounded-lg ${
-                          ann.isActive
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        {ann.isActive ? 'Active on Web' : 'Hidden'}
-                      </button>
+                    {ann.tamilText && (
+                      <p className="text-xs text-slate-600 font-medium">தமிழ்: {ann.tamilText}</p>
+                    )}
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedAnnouncementForEdit(ann);
-                          setIsAnnouncementModalOpen(true);
-                        }}
-                        className="text-xs font-semibold text-emerald-600 hover:text-emerald-700"
-                      >
-                        Edit Style
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1 border-t border-slate-100">
+                      <div className="flex items-center gap-4 text-slate-500">
+                        <span>Link: <strong className="text-slate-800">{ann.linkUrl || '/products'}</strong></span>
+                        <span>Schedule: <strong className="text-slate-800">{ann.startDate} to {ann.endDate}</strong></span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAnnouncementActive(ann)}
+                          className={`text-xs font-bold px-2.5 py-1 rounded-lg ${
+                            ann.isActive
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {ann.isActive ? 'Active on Web' : 'Hidden'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedAnnouncementForEdit(ann);
+                            setIsAnnouncementModalOpen(true);
+                          }}
+                          className="text-xs font-semibold text-emerald-600 hover:text-emerald-700"
+                        >
+                          Edit Style
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAnnouncement(ann.id)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
+                          title="Delete Announcement"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -474,55 +626,74 @@ export const MarketingPage = () => {
             <h3 className="text-base font-bold text-slate-900 mb-1">Customer Broadcast Records</h3>
             <p className="text-xs text-slate-500 mb-4">Detailed delivery and engagement analytics per segmented marketing blast.</p>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                    <th className="py-2.5 px-3">Campaign Name</th>
-                    <th className="py-2.5 px-3">Channel</th>
-                    <th className="py-2.5 px-3">Segment</th>
-                    <th className="py-2.5 px-3">Target</th>
-                    <th className="py-2.5 px-3">Sent / Delivered</th>
-                    <th className="py-2.5 px-3">Read / Opened</th>
-                    <th className="py-2.5 px-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {campaigns.map(camp => (
-                    <tr key={camp.id} className="hover:bg-slate-50">
-                      <td className="py-3 px-3">
-                        <p className="font-bold text-slate-900">{camp.title}</p>
-                        <p className="text-[11px] text-slate-400 truncate max-w-[280px]">{camp.templateText}</p>
-                      </td>
-                      <td className="py-3 px-3">
-                        <span className="uppercase font-bold text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-800">
-                          {camp.channel}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 font-medium text-slate-700">{camp.segment}</td>
-                      <td className="py-3 px-3 font-semibold text-slate-900">{camp.targetCount} users</td>
-                      <td className="py-3 px-3">
-                        <span className="font-semibold text-slate-800">{camp.sentCount}</span> / <span className="font-bold text-emerald-600">{camp.deliveredCount}</span>
-                      </td>
-                      <td className="py-3 px-3">
-                        <span className="font-bold text-purple-700">{camp.readCount} ({Math.round(((camp.readCount || 0) / (camp.deliveredCount || 1)) * 100)}%)</span>
-                      </td>
-                      <td className="py-3 px-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          camp.status === 'completed'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : camp.status === 'scheduled'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}>
-                          {camp.status}
-                        </span>
-                      </td>
+            {campaigns.length === 0 ? (
+              <div className="border border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-500 space-y-2">
+                <Send className="w-8 h-8 mx-auto text-slate-300" />
+                <h4 className="text-sm font-bold text-slate-800">No Broadcast Campaigns Sent</h4>
+                <p className="text-xs text-slate-400">All demo broadcast logs have been cleared. Click "New Broadcast Campaign" to send customer SMS/WhatsApp blasts.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
+                      <th className="py-2.5 px-3">Campaign Name</th>
+                      <th className="py-2.5 px-3">Channel</th>
+                      <th className="py-2.5 px-3">Segment</th>
+                      <th className="py-2.5 px-3">Target</th>
+                      <th className="py-2.5 px-3">Sent / Delivered</th>
+                      <th className="py-2.5 px-3">Read / Opened</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3 text-right">Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {campaigns.map(camp => (
+                      <tr key={camp.id} className="hover:bg-slate-50">
+                        <td className="py-3 px-3">
+                          <p className="font-bold text-slate-900">{camp.title}</p>
+                          <p className="text-[11px] text-slate-400 truncate max-w-[280px]">{camp.templateText}</p>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="uppercase font-bold text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                            {camp.channel}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 font-medium text-slate-700">{camp.segment}</td>
+                        <td className="py-3 px-3 font-semibold text-slate-900">{camp.targetCount} users</td>
+                        <td className="py-3 px-3">
+                          <span className="font-semibold text-slate-800">{camp.sentCount}</span> / <span className="font-bold text-emerald-600">{camp.deliveredCount}</span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="font-bold text-purple-700">{camp.readCount} ({Math.round(((camp.readCount || 0) / (camp.deliveredCount || 1)) * 100)}%)</span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            camp.status === 'completed'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : camp.status === 'scheduled'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}>
+                            {camp.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCampaign(camp.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Delete Campaign Record"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -530,39 +701,59 @@ export const MarketingPage = () => {
       {/* TAB 4: Notification Templates */}
       {activeTab === 'templates' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {templates.map(tmpl => (
-              <div key={tmpl.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900">{tmpl.name}</span>
-                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                      {tmpl.channel}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-600 mt-2 bg-slate-50 p-3 rounded-xl font-mono leading-relaxed">
-                    {tmpl.content}
-                  </p>
-
-                  <div className="mt-3">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Supported Variables:</span>
-                    <div className="flex flex-wrap gap-1.5 mt-1">
-                      {tmpl.variables.map(v => (
-                        <span key={v} className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-semibold rounded-md">
-                          {v}
+          {templates.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500 space-y-3">
+              <Bell className="w-10 h-10 mx-auto text-slate-300" />
+              <h3 className="text-base font-bold text-slate-800">No Notification Templates</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                All templates have been cleared.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {templates.map(tmpl => (
+                <div key={tmpl.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-900">{tmpl.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                          {tmpl.channel}
                         </span>
-                      ))}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTemplate(tmpl.id)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
+                          title="Delete Template"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-600 mt-2 bg-slate-50 p-3 rounded-xl font-mono leading-relaxed">
+                      {tmpl.content}
+                    </p>
+
+                    <div className="mt-3">
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Supported Variables:</span>
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {tmpl.variables.map(v => (
+                          <span key={v} className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-semibold rounded-md">
+                            {v}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-100 text-right">
-                  <span className="text-[11px] text-slate-400">Trigger: {tmpl.event}</span>
+                  <div className="mt-4 pt-3 border-t border-slate-100 text-right">
+                    <span className="text-[11px] text-slate-400">Trigger: {tmpl.event}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

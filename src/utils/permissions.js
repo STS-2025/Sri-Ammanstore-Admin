@@ -65,10 +65,40 @@ export const PERMISSIONS = {
   STAFF_MANAGE: 'staff.manage',
   ROLES_MANAGE: 'roles.manage',
   SETTINGS_MANAGE: 'settings.manage',
-  AUDIT_VIEW: 'audit.view'
+  AUDIT_VIEW: 'audit.view',
+
+  // POS Billing & Counter Capabilities
+  MANUAL_ACCESS: 'manual.access',
+  POS_VIEW: 'pos.view',
+  POS_CREATE_BILL: 'pos.create_bill',
+  POS_EDIT_PRICE: 'pos.edit_price',
+  POS_APPLY_DISCOUNT: 'pos.apply_discount',
+  POS_USE_CREDIT: 'pos.use_credit',
+  POS_RECEIVE_PAYMENT: 'pos.receive_payment',
+  POS_VOID_BILL: 'pos.void_bill',
+  POS_PRINT_INVOICE: 'pos.print_invoice'
 };
 
 export const PERMISSION_GROUPS = [
+  {
+    name: 'Manual Retail Operations',
+    permissions: [
+      { key: PERMISSIONS.MANUAL_ACCESS, label: 'Full Access to Manual Orders, Customers & Credit Workspace' }
+    ]
+  },
+  {
+    name: 'POS & Billing Counter',
+    permissions: [
+      { key: PERMISSIONS.POS_VIEW, label: 'Access POS Billing Workspace' },
+      { key: PERMISSIONS.POS_CREATE_BILL, label: 'Create & Complete Manual Bills' },
+      { key: PERMISSIONS.POS_EDIT_PRICE, label: 'Override Item Prices in POS (High Risk)' },
+      { key: PERMISSIONS.POS_APPLY_DISCOUNT, label: 'Apply Manual POS Discounts' },
+      { key: PERMISSIONS.POS_USE_CREDIT, label: 'Process Credit Sales / Pay Later' },
+      { key: PERMISSIONS.POS_RECEIVE_PAYMENT, label: 'Receive Customer Credit Payments' },
+      { key: PERMISSIONS.POS_VOID_BILL, label: 'Void / Cancel Completed Bills (High Risk)' },
+      { key: PERMISSIONS.POS_PRINT_INVOICE, label: 'Print POS Invoices & Thermal Receipts' }
+    ]
+  },
   {
     name: 'Dashboard',
     permissions: [

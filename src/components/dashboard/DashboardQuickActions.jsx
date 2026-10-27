@@ -58,10 +58,10 @@ export const DashboardQuickActions = ({ onOpenBarcodeScanner, onAddProduct }) =>
       onClick: () => navigate('/marketing')
     },
     {
-      label: 'Create Manual Order',
+      label: '+ New POS Billing',
       icon: ShoppingCart,
-      color: 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200',
-      onClick: () => navigate('/orders')
+      color: 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border-emerald-300 font-bold',
+      onClick: () => navigate('/orders/create-manual-order')
     }
   ];
 

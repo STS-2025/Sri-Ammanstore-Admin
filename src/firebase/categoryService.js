@@ -10,12 +10,11 @@ const getStoredCategories = () => {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(INITIAL_CATEGORIES));
-      return INITIAL_CATEGORIES;
+      return [];
     }
     return JSON.parse(raw);
   } catch (e) {
-    return INITIAL_CATEGORIES;
+    return [];
   }
 };
 
@@ -27,21 +26,46 @@ const saveStoredCategories = (cats) => {
   }
 };
 
+const SEEDED_KEY = 'grocery_admin_categories_seeded_v1';
+
+export const seedInitialCategories = async () => {
+  if (!isFirebaseConfigured) return INITIAL_CATEGORIES;
+  try {
+    const promises = INITIAL_CATEGORIES.map((cat) =>
+      setDoc(
+        doc(db, COLLECTIONS.CATEGORIES, cat.id),
+        {
+          ...cat,
+          serverTimestamp: serverTimestamp()
+        },
+        { merge: true }
+      )
+    );
+    await Promise.all(promises);
+    try { localStorage.setItem(SEEDED_KEY, 'true'); } catch (e) {}
+    return INITIAL_CATEGORIES;
+  } catch (err) {
+    console.warn('[Firestore] Auto-seed categories notice:', err.message);
+    return INITIAL_CATEGORIES;
+  }
+};
+
 export const getAllCategories = async () => {
   if (!isFirebaseConfigured) {
-    return getStoredCategories();
+    const stored = getStoredCategories();
+    return stored;
   }
 
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.CATEGORIES));
-    if (snap.empty) {
-      return getStoredCategories();
-    }
     const list = [];
     snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-    return list.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    const sorted = list.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    saveStoredCategories(sorted);
+    return sorted;
   } catch (e) {
-    return getStoredCategories();
+    const stored = getStoredCategories();
+    return stored;
   }
 };
 
@@ -89,19 +113,26 @@ export const createCategory = async (catData, user) => {
 export const updateCategory = async (id, catData, user) => {
   const current = getStoredCategories();
   const index = current.findIndex((c) => c.id === id);
-  if (index === -1) throw new Error('Category not found');
 
-  const old = current[index];
+  const old = index !== -1 ? current[index] : {};
   const updated = { ...old, ...catData, id, updatedAt: new Date().toISOString() };
-  current[index] = updated;
+  if (index !== -1) {
+    current[index] = updated;
+  } else {
+    current.push(updated);
+  }
   saveStoredCategories(current);
 
   if (isFirebaseConfigured) {
     try {
-      await updateDoc(doc(db, COLLECTIONS.CATEGORIES, id), {
-        ...updated,
-        serverTimestamp: serverTimestamp()
-      });
+      await setDoc(
+        doc(db, COLLECTIONS.CATEGORIES, id),
+        {
+          ...updated,
+          serverTimestamp: serverTimestamp()
+        },
+        { merge: true }
+      );
     } catch (err) {
       console.error('[Firestore] Category update failed:', err);
     }
@@ -115,7 +146,7 @@ export const updateCategory = async (id, catData, user) => {
     module: 'Categories',
     targetId: id,
     targetType: 'category',
-    reason: `Modified category properties for ${updated.name}`
+    reason: `Modified category properties for ${updated.name || id}`
   });
 
   return updated;
@@ -124,14 +155,23 @@ export const updateCategory = async (id, catData, user) => {
 export const deleteCategory = async (id, reason, user) => {
   const current = getStoredCategories();
   const target = current.find((c) => c.id === id);
-  if (!target) throw new Error('Category not found');
 
+  // Remove from local storage cache
   const filtered = current.filter((c) => c.id !== id);
   saveStoredCategories(filtered);
 
   if (isFirebaseConfigured) {
     try {
+      // 1. Delete by document ID
       await deleteDoc(doc(db, COLLECTIONS.CATEGORIES, id));
+
+      // 2. Also attempt deletion if ID was stored under cat.slug or cat.name
+      if (target?.slug && target.slug !== id) {
+        try { await deleteDoc(doc(db, COLLECTIONS.CATEGORIES, target.slug)); } catch (e) {}
+      }
+      if (target?.name && target.name !== id) {
+        try { await deleteDoc(doc(db, COLLECTIONS.CATEGORIES, target.name)); } catch (e) {}
+      }
     } catch (err) {
       console.error('[Firestore] Category delete failed:', err);
     }

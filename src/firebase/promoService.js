@@ -9,13 +9,9 @@ const PROMOS_KEY = 'grocery_admin_promo_codes_v4';
 const getStoredPromos = () => {
   try {
     const raw = localStorage.getItem(PROMOS_KEY);
-    if (!raw) {
-      localStorage.setItem(PROMOS_KEY, JSON.stringify(INITIAL_PROMO_CODES));
-      return INITIAL_PROMO_CODES;
-    }
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    return INITIAL_PROMO_CODES;
+    return [];
   }
 };
 
@@ -38,11 +34,7 @@ export const getAllPromoCodes = async () => {
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.PROMO_CODES));
     if (snap.empty) {
-      const local = getStoredPromos();
-      for (const p of local) {
-        await setDoc(doc(db, COLLECTIONS.PROMO_CODES, p.id), { ...p, createdAt: serverTimestamp() });
-      }
-      return local;
+      return [];
     }
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (err) {
@@ -161,6 +153,34 @@ export const deletePromoCode = async (promoId, user) => {
 };
 
 /**
+ * Clear all promo codes
+ */
+export const clearAllPromoCodes = async (user) => {
+  saveStoredPromos([]);
+  try {
+    localStorage.removeItem('grocery_admin_promos_v2');
+  } catch (e) {}
+  if (isFirebaseConfigured) {
+    try {
+      const snap = await getDocs(collection(db, COLLECTIONS.PROMO_CODES));
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, COLLECTIONS.PROMO_CODES, d.id));
+      }
+    } catch (e) {
+      console.warn('Firestore clear promos failed:', e);
+    }
+  }
+  await logActivity(
+    user || { id: 'marketing', name: 'Marketing Staff' },
+    'marketing.promos_clear',
+    COLLECTIONS.PROMO_CODES,
+    'all',
+    'Cleared all promo codes and discount coupons'
+  );
+  return true;
+};
+
+/**
  * Validate promo code against cart
  */
 export const validatePromoCode = (code, cartAmount, customerOrderCount = 0) => {
@@ -219,14 +239,14 @@ export const validatePromoCode = (code, cartAmount, customerOrderCount = 0) => {
  * Get aggregated Promo Analytics
  */
 export const getPromoAnalytics = (promos = []) => {
-  const list = promos.length > 0 ? promos : getStoredPromos();
+  const list = Array.isArray(promos) ? promos : [];
   const totalCodes = list.length;
   const activeCodes = list.filter(p => p.status === 'active').length;
   const totalUsed = list.reduce((sum, p) => sum + (p.timesUsed || 0), 0);
   const totalSales = list.reduce((sum, p) => sum + (p.salesGenerated || 0), 0);
   const totalDiscount = list.reduce((sum, p) => sum + (p.totalDiscountGiven || 0), 0);
   const avgOrderValue = totalUsed > 0 ? Math.round(totalSales / totalUsed) : 0;
-  const roi = totalDiscount > 0 ? ((totalSales - totalDiscount) / totalDiscount).toFixed(1) : 0;
+  const roi = totalDiscount > 0 ? ((totalSales - totalDiscount) / totalDiscount).toFixed(1) : '0';
 
   return {
     totalCodes,
