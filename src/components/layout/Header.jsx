@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Search,
   Barcode,
+  Package,
+  Users,
+  MapPin,
   Bell,
   Menu,
   LogOut,
@@ -22,16 +25,47 @@ import { ROLE_DEFINITIONS, ROLES } from '../../utils/roles';
 import { useNotification } from '../../context/NotificationContext';
 import { getAllProducts } from '../../firebase/productService';
 import { getAllOrders } from '../../firebase/orderService';
+import { getAllCustomers, getAllOnlineCustomers } from '../../firebase/customerService';
 
-export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeScanner }) => {
+const FontSizeControl = ({ value, onChange, className = '' }) => (
+  <label className={`flex items-center gap-2 text-xs font-semibold text-slate-600 ${className}`}>
+    <span>Font Size</span>
+    <select
+      aria-label="Font Size"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+    >
+      <option value="small">Small</option>
+      <option value="normal">Normal</option>
+      <option value="large">Large</option>
+      <option value="extra-large">Extra Large</option>
+    </select>
+  </label>
+);
+
+export const Header = ({
+  onOpenMobileSidebar,
+  onOpenGlobalSearch,
+  onOpenBarcodeScanner,
+  fontSize = 'normal',
+  onFontSizeChange
+}) => {
   const { currentUser, userProfile, userRole, isSuperAdmin, logout, switchDemoRole, isFirebaseConfigured } = useAuth();
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const [notificationDropdownOpen, setNotificationDropdownOpen] = useState(false);
   const [alerts, setAlerts] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchIndex, setSearchIndex] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const searchRef = useRef(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const notify = useNotification();
+  const isManualOrderPage = location.pathname === '/orders/create-manual-order';
 
   const currentRoleDef = ROLE_DEFINITIONS[userRole] || {
     name: 'Operator',
@@ -43,6 +77,103 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
     userRole === ROLES.SUPER_ADMIN ||
     currentUser?.role === ROLES.SUPER_ADMIN ||
     userProfile?.role === ROLES.SUPER_ADMIN;
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadSearchIndex = async () => {
+      setSearchLoading(true);
+      try {
+        const [products, manualCustomers, onlineCustomers] = await Promise.all([
+          getAllProducts(), getAllCustomers(), getAllOnlineCustomers()
+        ]);
+        const customerItems = [
+          ...(manualCustomers || []).map((c) => ({ ...c, source: 'Manual Customer', type: 'manual_customer', path: '/manual-customers' })),
+          ...(onlineCustomers || []).map((c) => ({ ...c, source: 'Online Customer', type: 'online_customer', path: '/customers' }))
+        ].map((customer) => {
+          const customerId = customer.customerId || customer.id || '';
+          const mobile = customer.mobile || customer.phone || customer.mobileNumber || customer.phoneNumber || '';
+          return {
+            id: `${customer.type}-${customer.id || customerId}`,
+            ...customer,
+            title: customer.name || 'Unnamed customer',
+            subtitle: `${customerId || 'No customer ID'} • ${mobile || 'No mobile number'}`,
+            details: {
+              customerId,
+              mobile,
+              area: customer.area || customer.locality || customer.address?.area || customer.address?.locality || customer.address?.city || 'N/A',
+              outstandingBalance: customer.outstandingBalance ?? customer.outstandingAmount ?? customer.dueAmount ?? customer.balance ?? customer.creditBalance ?? 0
+            },
+            searchable: [customer.name, customerId, customer.id, mobile, customer.email].filter(Boolean).join(' ')
+          };
+        });
+        const productItems = (products || []).map((product) => {
+          const variants = product.variants || [];
+          const identifiers = [...new Set([
+            product.hsnCode,
+            ...variants.flatMap((v) => [v.barcode, v.sku, v.hsnCode])
+          ].filter(Boolean))];
+          return {
+            id: `product-${product.id}`,
+            type: 'product', source: 'Product', path: '/products',
+            title: product.name || 'Unnamed product',
+            subtitle: identifiers.length ? identifiers.slice(0, 3).join(' • ') : 'No barcode / HSN code',
+            details: {
+              pack: variants[0]?.title || variants[0]?.packSize || variants[0]?.name || '',
+              localName: product.localName || product.tamilName || product.shortDescription || '',
+              sku: variants[0]?.sku || product.sku || 'N/A',
+              barcodeValue: variants[0]?.barcode || product.barcode || 'N/A',
+              rack: product.rack || product.storage?.rack || product.location?.rack || variants[0]?.rack || 'N/A',
+              self: product.self || product.shelf || product.storage?.self || product.storage?.shelf || product.location?.self || variants[0]?.self || 'N/A',
+              bin: product.bin || product.storage?.bin || product.location?.bin || variants[0]?.bin || 'N/A',
+              stock: product.totalStock ?? product.stock ?? variants.reduce((total, variant) => total + Number(variant.stock || 0), 0),
+              price: variants[0]?.retailPrice ?? variants[0]?.sellingPrice ?? variants[0]?.price ?? product.price ?? 0,
+              mrp: variants[0]?.mrp ?? variants[0]?.marketPrice ?? ''
+            },
+            searchable: [product.name, product.id, ...identifiers].filter(Boolean).join(' ')
+          };
+        });
+        if (!cancelled) setSearchIndex([...customerItems, ...productItems]);
+      } catch (error) {
+        if (!cancelled) setSearchIndex([]);
+        console.warn('Header search index load error:', error);
+      } finally {
+        if (!cancelled) setSearchLoading(false);
+      }
+    };
+    loadSearchIndex();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const handleSearchOutsideClick = (event) => {
+      if (searchRef.current && !searchRef.current.contains(event.target)) setSearchOpen(false);
+    };
+    document.addEventListener('mousedown', handleSearchOutsideClick);
+    return () => document.removeEventListener('mousedown', handleSearchOutsideClick);
+  }, []);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const searchResults = normalizedQuery
+    ? searchIndex.filter((item) => item.searchable.toLowerCase().includes(normalizedQuery)).slice(0, 8)
+    : [];
+
+  const handleSearchKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      setSearchQuery('');
+      setSearchOpen(false);
+    }
+    if (event.key === 'Enter' && searchResults[0]) {
+      navigate(searchResults[0].path);
+      setSearchQuery('');
+      setSearchOpen(false);
+    }
+  };
+
+  const handleSearchResultClick = (result) => {
+    navigate(result.path);
+    setSearchQuery('');
+    setSearchOpen(false);
+  };
 
   useEffect(() => {
     const loadAlerts = async () => {
@@ -125,7 +256,7 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
   return (
     <header className="sticky top-0 z-50 flex min-w-0 items-center justify-between h-16 px-2.5 sm:px-4 bg-white border-b border-slate-200 md:px-6 shadow-subtle">
       {/* Left: Mobile Menu Toggle & Global Search Trigger */}
-      <div className="flex min-w-0 items-center flex-1 max-w-xl gap-2 sm:gap-3">
+      <div className="flex items-center flex-1 max-w-3xl min-w-0 gap-2 sm:gap-3">
         <button
           onClick={onOpenMobileSidebar}
           className="p-2 transition-colors rounded-lg lg:hidden text-slate-600 hover:bg-slate-100"
@@ -134,19 +265,83 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
           <Menu className="w-5 h-5" />
         </button>
 
-        {/* Global Search Bar (Trigger) */}
-        <button
+        {/* Inline global search */}
+        <div className="relative flex-1 max-w-xl min-w-0" ref={searchRef}>
+          <div className={`min-w-0 flex items-center gap-2 px-2.5 sm:px-3.5 py-2 text-xs bg-slate-100 text-slate-600 rounded-xl border transition-all ${searchOpen ? 'border-emerald-400 ring-2 ring-emerald-100 bg-white' : 'border-slate-200/80 hover:bg-slate-200/70'}`}>
+            <Search className={`w-4 h-4 shrink-0 ${searchOpen ? 'text-emerald-700' : 'text-slate-400'}`} />
+            <input
+              type="search"
+              value={searchQuery}
+              onFocus={() => setSearchOpen(true)}
+              onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="Search customer name, mobile, ID, product, barcode, HSN..."
+              aria-label="Search customers and products"
+              className="flex-1 min-w-0 bg-transparent outline-none placeholder:text-slate-400"
+            />
+            <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[10px] text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-sm">Enter</kbd>
+          </div>
+
+          {searchOpen && normalizedQuery && (
+            <div className="absolute left-0 right-0 top-full z-[60] mt-2 overflow-hidden bg-white border border-slate-200 rounded-2xl shadow-2xl">
+              {searchLoading ? (
+                <div className="px-4 py-5 text-xs text-slate-400">Loading customers and products...</div>
+              ) : searchResults.length === 0 ? (
+                <div className="px-4 py-5 text-xs text-slate-400">No matching customer or product found.</div>
+              ) : (
+                <div className="max-h-80 overflow-y-auto p-1.5">
+                  {searchResults.map((result) => (
+                    <button key={result.id} type="button" onClick={() => handleSearchResultClick(result)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-emerald-50 transition-colors">
+                      <span className="flex items-center justify-center w-8 h-8 rounded-lg shrink-0 bg-slate-100">
+                        {result.type === 'product' ? <Package className="w-4 h-4 text-emerald-600" /> : <Users className="w-4 h-4 text-purple-600" />}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-xs font-semibold truncate text-slate-900">{result.title}</span>
+                        <span className="block truncate text-[11px] text-slate-400">{result.subtitle}</span>
+                        {result.type === 'manual_customer' && (
+                          <span className="mt-1 grid grid-cols-2 gap-x-2 text-[10px] text-slate-500">
+                            <span>Area: <strong className="text-slate-700">{result.details.area}</strong></span>
+                            <span>Outstanding: <strong className="text-rose-700">₹{Number(result.details.outstandingBalance || 0).toLocaleString('en-IN')}</strong></span>
+                          </span>
+                        )}
+                        {result.type === 'product' && (
+                          <span className="mt-2 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] shadow-sm">
+                            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              {result.details.pack && <span className="rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 font-bold text-emerald-700">{result.details.pack}</span>}
+                              {result.details.localName && <span className="text-slate-500">({result.details.localName})</span>}
+                            </span>
+                            <span className="block mt-1 text-slate-500">SKU: <strong className="font-mono text-slate-600">{result.details.sku}</strong> · Barcode: <strong className="font-mono text-slate-600">{result.details.barcodeValue}</strong></span>
+                            <span className="mt-1 inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-amber-800"><MapPin className="w-3 h-3" />Rack — {result.details.rack} / Shelf — {result.details.self} / Bin — {result.details.bin}</span>
+                          </span>
+                        )}
+                      </span>
+                      {result.type === 'product' && (
+                        <span className="flex-col items-end hidden gap-1 sm:flex shrink-0">
+                          <strong className="text-xs text-slate-800">₹{Number(result.details.price || 0).toFixed(2)}</strong>
+                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Stock: {result.details.stock}</span>
+                        </span>
+                      )}
+                      <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{result.source}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {/* Barcode scanner remains available beside the inline search. */}
+        {false && <button
           onClick={onOpenGlobalSearch}
           className="min-w-0 flex-1 max-w-md flex items-center justify-between gap-2 px-2.5 sm:px-3.5 py-2 text-xs bg-slate-100 hover:bg-slate-200/70 text-slate-500 rounded-xl border border-slate-200/80 transition-all text-left group"
         >
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex items-center min-w-0 gap-2">
             <Search className="w-4 h-4 transition-colors text-slate-400 group-hover:text-emerald-700" />
             <span className="min-w-0 truncate">Search Order, Product, SKU, Customer...</span>
           </div>
           <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[10px] text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-sm">
             ⌘K
           </kbd>
-        </button>
+        </button>}
 
         {/* Quick Barcode Scanner Button */}
         <button
@@ -161,6 +356,14 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
 
       {/* Right: Operational Status, Role Switcher, Alerts, Profile */}
           <div className="flex items-center gap-1 sm:gap-2.5 md:gap-4 shrink-0" ref={dropdownRef}>
+
+        {isManualOrderPage && (
+          <FontSizeControl
+            value={fontSize}
+            onChange={onFontSizeChange}
+            className="hidden xl:flex"
+          />
+        )}
 
         {/* Role Indicator / Switcher Pill */}
         <div className="relative hidden sm:block">
@@ -301,9 +504,19 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
                 </p>
               </div>
 
+              {isManualOrderPage && (
+                <div className="px-3 py-2 border-b border-slate-100 xl:hidden">
+                  <FontSizeControl
+                    value={fontSize}
+                    onChange={onFontSizeChange}
+                    className="justify-between"
+                  />
+                </div>
+              )}
+
               
 {/* Mobile-only Role Switcher & Notifications */}
-<div className="sm:hidden px-3 py-2 border-b border-slate-100 space-y-3">
+<div className="px-3 py-2 space-y-3 border-b sm:hidden border-slate-100">
 
   {/* Role */}
   <div>
@@ -356,11 +569,11 @@ export const Header = ({ onOpenMobileSidebar, onOpenGlobalSearch, onOpenBarcodeS
     </div>
 
     {alerts.length === 0 ? (
-      <p className="text-xs text-slate-500 py-2">
+      <p className="py-2 text-xs text-slate-500">
         No active operational alerts.
       </p>
     ) : (
-      <div className="space-y-2 max-h-48 overflow-y-auto">
+      <div className="space-y-2 overflow-y-auto max-h-48">
         {alerts.map((a) => (
           <button
             key={a.id}

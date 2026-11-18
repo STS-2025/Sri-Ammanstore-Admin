@@ -38,10 +38,10 @@ import {
   updateVariantPrice
 } from '../../firebase/productService';
 import { getAllCategories } from '../../firebase/categoryService';
+import { getAllBrands } from '../../firebase/brandService';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { INITIAL_CATEGORIES, INITIAL_BRANDS } from '../../data/grocerySeedData';
 import { groupProductImportRows, readProductImportRows } from '../../utils/productExcel';
 
 class ModalErrorBoundary extends React.Component {
@@ -87,6 +87,7 @@ class ModalErrorBoundary extends React.Component {
 export const ProductsPage = () => {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [brands, setBrands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -114,12 +115,14 @@ export const ProductsPage = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [data, liveCats] = await Promise.all([
+      const [data, liveCats, liveBrands] = await Promise.all([
         getAllProducts(),
-        getAllCategories()
+        getAllCategories(),
+        getAllBrands()
       ]);
       setProducts(data);
       setCategories(liveCats || []);
+      setBrands(liveBrands || []);
     } catch (err) {
       notify.error('Failed to load products', err.message);
     } finally {
@@ -226,8 +229,8 @@ export const ProductsPage = () => {
     setImporting(true);
     try {
       const rows = readProductImportRows(await importExcelFile.text(), importExcelFile.name);
-      const categoryOptions = categories.length ? categories : INITIAL_CATEGORIES;
-      const productsToImport = groupProductImportRows(rows, categoryOptions, INITIAL_BRANDS);
+      const categoryOptions = categories;
+      const productsToImport = groupProductImportRows(rows, categoryOptions, brands);
       if (!productsToImport.length) throw new Error('The Excel file has no product rows to import.');
       const productIds = productsToImport.map((product) => String(product.__importProductId || '').trim().toLocaleLowerCase()).filter(Boolean);
       if (new Set(productIds).size !== productIds.length) throw new Error('Each distinct product must have a unique ProductID in the Excel file.');

@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, setDoc, updateDoc, onSnapshot, query, where, serverTimestamp
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot, query, where, serverTimestamp
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { auth, db, isFirebaseConfigured } from './config';
@@ -78,6 +78,7 @@ export const createScannerSession = async ({ counterId = 'Counter #1', user } = 
     billingUserName: user?.displayName || user?.email || 'Counter Staff',
     connectedDeviceId: null,
     connectedDeviceName: null,
+    connectedDeviceModel: null,
     createdAt: now.toISOString(),
     expiresAt,
     lastActivityAt: now.toISOString()
@@ -137,10 +138,42 @@ export const getScannerSession = async (sessionId) => {
   return localSessions[sessionId] || null;
 };
 
+export const getActiveScannerSessionForUser = async (userId) => {
+  if (!userId) return null;
+
+  let sessions;
+  if (isFirebaseConfigured) {
+    await ensureScannerAuthentication();
+    const sessionsSnapshot = await getDocs(query(
+      collection(db, COLLECTIONS.SCANNER_SESSIONS),
+      where('billingUserId', '==', userId)
+    ));
+    sessions = sessionsSnapshot.docs.map((sessionDoc) => ({
+      id: sessionDoc.id,
+      ...sessionDoc.data()
+    }));
+  } else {
+    sessions = Object.values(getLocalSessions());
+  }
+
+  const activeSessions = sessions.filter((session) => (
+    session.billingUserId === userId &&
+    ['CONNECTED', 'WAITING_FOR_MOBILE'].includes(session.status) &&
+    Date.parse(session.expiresAt || '') > Date.now()
+  ));
+
+  activeSessions.sort((left, right) => (
+    Date.parse(right.connectedAt || right.createdAt || '') -
+    Date.parse(left.connectedAt || left.createdAt || '')
+  ));
+
+  return activeSessions[0] || null;
+};
+
 /**
  * Mobile Scanner Connect to Billing Session
  */
-export const connectMobileScanner = async ({ sessionId, token, deviceId, deviceName }) => {
+export const connectMobileScanner = async ({ sessionId, token, deviceId, deviceName, deviceModel }) => {
   const session = await getScannerSession(sessionId);
   if (!session) {
     throw new Error('Scanner session not found or invalid QR code.');
@@ -163,6 +196,9 @@ export const connectMobileScanner = async ({ sessionId, token, deviceId, deviceN
     status: 'CONNECTED',
     connectedDeviceId: deviceId || `device_${Date.now().toString(36)}`,
     connectedDeviceName: deviceName || 'Mobile Scanner Phone',
+    connectedDeviceModel: typeof deviceModel === 'string' && deviceModel.trim()
+      ? deviceModel.trim()
+      : null,
     connectedAt: now,
     lastActivityAt: now
   };
@@ -178,6 +214,7 @@ export const connectMobileScanner = async ({ sessionId, token, deviceId, deviceN
         verifiedToken: token,
         connectedDeviceId: updatedDoc.connectedDeviceId,
         connectedDeviceName: updatedDoc.connectedDeviceName,
+        connectedDeviceModel: updatedDoc.connectedDeviceModel,
         connectedAt: now,
         lastActivityAt: serverTimestamp()
       });
@@ -262,6 +299,42 @@ export const listenToScannerSession = (sessionId, callback) => {
 };
 
 /**
+ * Realtime listener for connected mobile scanner sessions.
+ */
+export const listenToConnectedScannerSessions = (callback, onError = () => {}) => {
+  if (typeof callback !== 'function') return () => {};
+
+  if (!isFirebaseConfigured) {
+    const emitConnectedSessions = () => {
+      const sessions = Object.values(getLocalSessions())
+        .filter((session) => session?.status === 'CONNECTED');
+      callback(sessions);
+    };
+
+    emitConnectedSessions();
+    const interval = setInterval(emitConnectedSessions, 1500);
+    return () => clearInterval(interval);
+  }
+
+  try {
+    const sessionsRef = collection(db, COLLECTIONS.SCANNER_SESSIONS);
+    const connectedSessionsQuery = query(sessionsRef, where('status', '==', 'CONNECTED'));
+    return onSnapshot(connectedSessionsQuery, (snap) => {
+      const sessions = [];
+      snap.forEach((sessionDoc) => sessions.push({ id: sessionDoc.id, ...sessionDoc.data() }));
+      callback(sessions);
+    }, (error) => {
+      console.error('[Firestore] Connected scanner sessions listener error:', error);
+      onError(error);
+    });
+  } catch (error) {
+    console.error('[Firestore] Connected scanner sessions listener setup failed:', error);
+    onError(error);
+    return () => {};
+  }
+};
+
+/**
  * Billing PC Realtime Listener for Pending Barcode Scan Events
  */
 export const listenToScanEvents = (sessionId, callback) => {
@@ -336,12 +409,6 @@ export const disconnectScannerSession = async (sessionId) => {
   const session = await getScannerSession(sessionId);
   if (!session) return;
 
-  const localSessions = getLocalSessions();
-  if (localSessions[sessionId]) {
-    localSessions[sessionId].status = 'DISCONNECTED';
-    saveLocalSessions(localSessions);
-  }
-
   if (isFirebaseConfigured) {
     try {
       await updateDoc(doc(db, COLLECTIONS.SCANNER_SESSIONS, sessionId), {
@@ -350,6 +417,13 @@ export const disconnectScannerSession = async (sessionId) => {
       });
     } catch (e) {
       console.error('[Firestore] Disconnect scanner session error:', e);
+      throw e;
     }
+  }
+
+  const localSessions = getLocalSessions();
+  if (localSessions[sessionId]) {
+    localSessions[sessionId].status = 'DISCONNECTED';
+    saveLocalSessions(localSessions);
   }
 };

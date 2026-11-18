@@ -10,7 +10,9 @@ import {
   Package,
   Layers,
   ArrowRight,
-  CheckCircle2
+  CheckCircle2,
+  Tag,
+  Building2
 } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { FormModal } from '../../components/common/FormModal';
@@ -27,6 +29,7 @@ import {
 } from '../../firebase/categoryService';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import { getAllBrands, createBrand, updateBrand, deleteBrand } from '../../firebase/brandService';
 
 export const CategoriesPage = () => {
   const [categories, setCategories] = useState([]);
@@ -35,6 +38,13 @@ export const CategoriesPage = () => {
   const [editingCategory, setEditingCategory] = useState(null);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [categoryToDelete, setCategoryToDelete] = useState(null);
+  const [brands, setBrands] = useState([]);
+  const [brandLoading, setBrandLoading] = useState(true);
+  const [isBrandModalOpen, setIsBrandModalOpen] = useState(false);
+  const [editingBrand, setEditingBrand] = useState(null);
+  const [isBrandDeleteOpen, setIsBrandDeleteOpen] = useState(false);
+  const [brandToDelete, setBrandToDelete] = useState(null);
+  const [brandFormData, setBrandFormData] = useState({ name: '', origin: '', status: 'active' });
 
   // Category form state
   const [formData, setFormData] = useState({
@@ -57,13 +67,16 @@ export const CategoriesPage = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setBrandLoading(true);
     try {
-      const data = await getAllCategories();
-      setCategories(data);
+      const [categoryData, brandData] = await Promise.all([getAllCategories(), getAllBrands()]);
+      setCategories(categoryData || []);
+      setBrands(brandData || []);
     } catch (err) {
       notify.error('Failed to load categories', err.message);
     } finally {
       setLoading(false);
+      setBrandLoading(false);
     }
   };
 
@@ -155,6 +168,57 @@ export const CategoriesPage = () => {
       await loadData();
     } catch (err) {
       notify.error('Delete Failed', err.message);
+    }
+  };
+
+  const handleOpenBrandCreate = () => {
+    setEditingBrand(null);
+    setBrandFormData({ name: '', origin: '', status: 'active' });
+    setIsBrandModalOpen(true);
+  };
+
+  const handleOpenBrandEdit = (brand) => {
+    setEditingBrand(brand);
+    setBrandFormData({
+      name: brand.name || '',
+      origin: brand.origin || '',
+      status: brand.status || 'active'
+    });
+    setIsBrandModalOpen(true);
+  };
+
+  const handleBrandSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!brandFormData.name.trim()) {
+      notify.error('Missing Name', 'Brand name is required.');
+      return;
+    }
+
+    try {
+      if (editingBrand) {
+        await updateBrand(editingBrand.id, brandFormData, currentUser);
+        notify.success('Brand Updated', `${brandFormData.name} updated successfully.`);
+      } else {
+        await createBrand(brandFormData, currentUser);
+        notify.success('Brand Created', `${brandFormData.name} added to the catalog.`);
+      }
+      setIsBrandModalOpen(false);
+      await loadData();
+    } catch (err) {
+      notify.error('Brand Operation Failed', err.message);
+    }
+  };
+
+  const handleBrandDeleteConfirm = async ({ reason }) => {
+    if (!brandToDelete) return;
+    try {
+      await deleteBrand(brandToDelete.id, reason, currentUser);
+      notify.success('Brand Deleted', `${brandToDelete.name} has been removed.`);
+      setIsBrandDeleteOpen(false);
+      setBrandToDelete(null);
+      await loadData();
+    } catch (err) {
+      notify.error('Brand Delete Failed', err.message);
     }
   };
 
@@ -282,6 +346,92 @@ export const CategoriesPage = () => {
           </div>
         ))}
       </div>
+
+      {/* Brands */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-lg font-bold text-slate-900">
+              <Tag className="w-5 h-5 text-emerald-700" />
+              Brands
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Add the brands that should appear in the Add Product form.
+            </p>
+          </div>
+          <PermissionGuard permission={PERMISSIONS.CATEGORIES_MANAGE}>
+            <button onClick={handleOpenBrandCreate} className="btn-primary text-xs">
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Brand</span>
+            </button>
+          </PermissionGuard>
+        </div>
+
+        {brandLoading ? (
+          <div className="p-6 text-xs text-center bg-white border rounded-xl border-slate-200 text-slate-400">
+            Loading brands...
+          </div>
+        ) : brands.length === 0 ? (
+          <div className="p-8 text-xs text-center bg-white border border-dashed rounded-xl border-slate-300 text-slate-400">
+            No brands added yet. Add a brand to make it available in the product form.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {brands.map((brand) => (
+              <div key={brand.id} className="flex items-center justify-between gap-3 p-4 bg-white border rounded-xl border-slate-200 shadow-subtle">
+                <div className="flex items-center min-w-0 gap-3">
+                  <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 shrink-0">
+                    <Building2 className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold truncate text-slate-900">{brand.name}</p>
+                    <p className="text-[11px] truncate text-slate-500">{brand.origin || 'Origin not specified'}</p>
+                    <StatusBadge status={brand.status === 'active' ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <PermissionGuard permission={PERMISSIONS.CATEGORIES_MANAGE}>
+                    <button onClick={() => handleOpenBrandEdit(brand)} className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-lg" title="Edit Brand">
+                      <Edit className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => { setBrandToDelete(brand); setIsBrandDeleteOpen(true); }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Delete Brand">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </PermissionGuard>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Brand Form Modal */}
+      <FormModal
+        isOpen={isBrandModalOpen}
+        onClose={() => setIsBrandModalOpen(false)}
+        title={editingBrand ? `Edit: ${editingBrand.name}` : 'Add Brand'}
+        subtitle="Only brands created here will be available in the Add Product form."
+        onSubmit={handleBrandSubmit}
+        submitLabel={editingBrand ? 'Update Brand' : 'Create Brand'}
+      >
+        <form className="space-y-4 text-xs">
+          <div>
+            <label className="input-label">Brand Name <span className="text-rose-500">*</span></label>
+            <input type="text" required value={brandFormData.name} onChange={(e) => setBrandFormData({ ...brandFormData, name: e.target.value })} placeholder="e.g. Aachi" className="input-text text-xs" />
+          </div>
+          <div>
+            <label className="input-label">Origin / Manufacturer</label>
+            <input type="text" value={brandFormData.origin} onChange={(e) => setBrandFormData({ ...brandFormData, origin: e.target.value })} placeholder="e.g. Chennai, Tamil Nadu" className="input-text text-xs" />
+          </div>
+          <div>
+            <label className="input-label">Status</label>
+            <select value={brandFormData.status} onChange={(e) => setBrandFormData({ ...brandFormData, status: e.target.value })} className="input-text text-xs">
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+        </form>
+      </FormModal>
 
       {/* Category Form Modal */}
       <FormModal
@@ -468,6 +618,19 @@ export const CategoriesPage = () => {
         reasonPlaceholder="Mandatory reason for removing category from catalog..."
         onConfirm={handleDeleteConfirm}
         onCancel={() => setIsDeleteOpen(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={isBrandDeleteOpen}
+        title="Delete Brand"
+        message={`Are you sure you want to delete "${brandToDelete?.name}"? Existing products will keep their saved brand name.`}
+        confirmText="Confirm Brand Deletion"
+        variant="danger"
+        isHighRisk={true}
+        requireReason={true}
+        reasonPlaceholder="Reason for removing this brand..."
+        onConfirm={handleBrandDeleteConfirm}
+        onCancel={() => setIsBrandDeleteOpen(false)}
       />
     </div>
   );

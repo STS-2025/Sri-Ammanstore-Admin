@@ -19,6 +19,7 @@ export const AnnouncementModal = ({ isOpen, onClose, onSave, announcement = null
   useEffect(() => {
     if (announcement) {
       setFormData({
+        id: announcement.id,
         text: announcement.text || '',
         tamilText: announcement.tamilText || '',
         linkUrl: announcement.linkUrl || '/products',

@@ -158,7 +158,7 @@ export const getAllOrders = async ({ manualOnly = false } = {}) => {
     const snap = await getDocs(orderQuery);
     if (snap.empty) return [];
     const list = [];
-    snap.forEach((d) => list.push(normalizeOrder({ id: d.id, ...d.data() })));
+    snap.forEach((d) => list.push(normalizeOrder({ ...d.data(), id: d.id })));
     return list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   } catch (e) {
     const stored = getStoredOrders();
@@ -330,6 +330,62 @@ export const updateManualOrderPaymentStatus = async (orderId, paymentStatus, use
   });
 
   return updatedOrder;
+};
+
+export const applyManualOrderPaymentAllocations = async (allocations, user) => {
+  const orders = await getAllOrders({ manualOnly: true });
+  const stored = getStoredOrders();
+  const updatedOrders = [];
+
+  for (const allocation of allocations) {
+    const order = orders.find((item) => item.id === allocation.orderId || item.orderNumber === allocation.orderId);
+    if (!order) throw new Error(`Manual order ${allocation.orderId} not found`);
+
+    const totalAmount = Number(order.totalAmount ?? order.total ?? 0);
+    const amountPaid = Number(order.amountPaid ?? 0);
+    const balanceDue = Number(order.balanceDue ?? Math.max(0, totalAmount - amountPaid));
+    const paymentAmount = Math.min(balanceDue, Math.max(0, Number(allocation.amount || 0)));
+    if (!paymentAmount) continue;
+
+    const nextAmountPaid = Math.round((amountPaid + paymentAmount) * 100) / 100;
+    const nextBalanceDue = Math.max(0, Math.round((balanceDue - paymentAmount) * 100) / 100);
+    const updatedOrder = {
+      ...order,
+      amountPaid: nextAmountPaid,
+      balanceDue: nextBalanceDue,
+      paymentStatus: nextBalanceDue === 0 ? 'paid' : 'unpaid',
+      updatedAt: new Date().toISOString()
+    };
+
+    if (isFirebaseConfigured) {
+      await setDoc(doc(db, COLLECTIONS.ORDERS, order.id), {
+        amountPaid: nextAmountPaid,
+        balanceDue: nextBalanceDue,
+        paymentStatus: updatedOrder.paymentStatus,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    const storedIndex = stored.findIndex((item) => item.id === order.id || item.orderNumber === order.orderNumber);
+    if (storedIndex !== -1) stored[storedIndex] = updatedOrder;
+    updatedOrders.push(updatedOrder);
+
+    await logActivity({
+      userId: user?.uid,
+      userEmail: user?.email,
+      userRole: user?.role,
+      action: `MANUAL_ORDER_PAYMENT_ALLOCATED_${updatedOrder.paymentStatus.toUpperCase()}`,
+      module: 'Manual Orders',
+      targetId: order.id || order.orderNumber,
+      targetType: 'order',
+      previousState: { amountPaid, balanceDue, paymentStatus: order.paymentStatus },
+      newState: { amountPaid: nextAmountPaid, balanceDue: nextBalanceDue, paymentStatus: updatedOrder.paymentStatus },
+      reason: `Customer payment allocated to manual order #${order.orderNumber}`
+    });
+  }
+
+  saveStoredOrders(stored);
+  return updatedOrders;
 };
 
 /**

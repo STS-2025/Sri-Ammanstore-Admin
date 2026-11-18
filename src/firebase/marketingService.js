@@ -259,50 +259,29 @@ export const getAllAnnouncements = async () => {
 
 export const saveAnnouncement = async (data, user) => {
   const announcements = getStoredAnnouncements();
+  const recordId = data.id || data.announcementId || null;
   let updated;
-
-  if (data.id) {
-    const idx = announcements.findIndex(a => a.id === data.id);
-    if (idx !== -1) {
-      updated = { ...announcements[idx], ...data, updatedAt: new Date().toISOString() };
-      announcements[idx] = updated;
-    } else {
-      updated = { ...data, createdAt: new Date().toISOString() };
-      announcements.push(updated);
-    }
+  if (recordId) {
+    const idx = announcements.findIndex((item) => item.id === recordId);
+    updated = idx !== -1
+      ? { ...announcements[idx], ...data, id: recordId, updatedAt: new Date().toISOString() }
+      : { ...data, id: recordId, createdAt: data.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+    if (idx !== -1) announcements[idx] = updated;
+    else announcements.push(updated);
   } else {
-    updated = {
-      ...data,
-      id: `ann-${Date.now().toString().slice(-4)}`,
-      createdAt: new Date().toISOString()
-    };
+    updated = { ...data, id: `ann-${Date.now().toString().slice(-4)}`, createdAt: new Date().toISOString() };
     announcements.push(updated);
   }
-
   saveStoredAnnouncements(announcements);
-
   if (isFirebaseConfigured) {
     try {
       await setDoc(doc(db, COLLECTIONS.ANNOUNCEMENTS, updated.id), { ...updated, updatedAt: serverTimestamp() });
-      await setDoc(doc(db, 'offerMessages', updated.id), {
-        text: updated.text,
-        order: updated.priority || 0,
-        createdAt: updated.createdAt,
-        updatedAt: serverTimestamp()
-      });
+      await setDoc(doc(db, 'offerMessages', updated.id), { text: updated.text, order: updated.priority || 0, createdAt: updated.createdAt, updatedAt: serverTimestamp() });
     } catch (e) {
       console.warn('Firestore announcement save failed:', e);
     }
   }
-
-  await logActivity(
-    user || { id: 'marketing', name: 'Marketing Staff' },
-    'marketing.announcement_save',
-    COLLECTIONS.ANNOUNCEMENTS,
-    updated.id,
-    `Saved storewide scrolling ticker: "${updated.text.slice(0, 45)}..."`
-  );
-
+  await logActivity(user || { id: 'marketing', name: 'Marketing Staff' }, 'marketing.announcement_save', COLLECTIONS.ANNOUNCEMENTS, updated.id, `Saved storewide scrolling ticker: "${updated.text.slice(0, 45)}..."`);
   return updated;
 };
 

@@ -11,6 +11,7 @@ export const AppLayout = () => {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [manualOrderFontSize, setManualOrderFontSize] = useState('normal');
   const notify = useNotification();
 
   const handleProductFoundFromBarcode = (product) => {
@@ -38,11 +39,13 @@ export const AppLayout = () => {
           onOpenMobileSidebar={() => setIsMobileOpen(true)}
           onOpenGlobalSearch={() => setIsSearchOpen(true)}
           onOpenBarcodeScanner={() => setIsScannerOpen(true)}
+          fontSize={manualOrderFontSize}
+          onFontSizeChange={setManualOrderFontSize}
         />
 
         {/* Content Outlet */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
-          <Outlet />
+          <Outlet context={{ manualOrderFontSize }} />
         </main>
       </div>
 

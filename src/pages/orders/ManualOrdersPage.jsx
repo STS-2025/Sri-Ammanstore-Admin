@@ -9,7 +9,11 @@ import {
   RefreshCw,
   Trash2,
   CalendarDays,
-  MapPin
+  MapPin,
+  X,
+  ChevronRight,
+  CalendarRange,
+  Package
 } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { DataTable } from '../../components/table/DataTable';
@@ -42,6 +46,7 @@ export const ManualOrdersPage = () => {
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printDocType, setPrintDocType] = useState('invoice');
   const [printTargetOrder, setPrintTargetOrder] = useState(null);
+  const [revenueModalView, setRevenueModalView] = useState(null);
 
   const notify = useNotification();
   const { currentUser, can } = usePermissions();
@@ -51,7 +56,16 @@ export const ManualOrdersPage = () => {
     setLoading(true);
     try {
       const data = await getAllOrders({ manualOnly: true });
-      setOrders(data.filter((order) => order.orderSource === 'manual'));
+      const seenOrderKeys = new Set();
+      const uniqueManualOrders = data
+        .filter((order) => order.orderSource === 'manual')
+        .filter((order, index) => {
+          const orderKey = order.id || order.orderNumber || `manual-order-row-${index}`;
+          if (seenOrderKeys.has(orderKey)) return false;
+          seenOrderKeys.add(orderKey);
+          return true;
+        });
+      setOrders(uniqueManualOrders);
     } catch (err) {
       notify.error('Failed to load manual orders', err.message);
     } finally {
@@ -122,6 +136,46 @@ export const ManualOrdersPage = () => {
   const todayRevenue = calculateRevenue(revenueRange.day, revenueRange.day);
   const weekRevenue = calculateRevenue(revenueRange.weekStart, revenueRange.weekEnd);
   const monthRevenue = calculateRevenue(revenueRange.monthStart, revenueRange.monthEnd);
+
+  const monthSalesByDay = useMemo(() => {
+    const monthStart = new Date(`${revenueRange.monthStart}T00:00:00`);
+    const daysInMonth = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+    return Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1;
+      const dateKey = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      return {
+        dateKey,
+        label: `${day}-${monthStart.getMonth() + 1}-${monthStart.getFullYear()}`,
+        amount: calculateRevenue(dateKey, dateKey)
+      };
+    });
+  }, [revenueOrders, revenueRange.monthStart]);
+
+  const monthProductSales = useMemo(() => {
+    const productSales = new Map();
+    revenueOrders.forEach((order) => {
+      const orderDate = getOrderDateKey(order.createdAt || order.updatedAt);
+      if (orderDate < revenueRange.monthStart || orderDate > revenueRange.monthEnd) return;
+
+      (Array.isArray(order.items) ? order.items : []).forEach((item) => {
+        if (item.pickStatus === 'unavailable') return;
+        const productName = item.productName || item.name || item.title || 'Grocery Item';
+        const key = productName.trim().toLowerCase();
+        const quantity = Number(item.quantity ?? item.qty ?? 0);
+        if (!Number.isFinite(quantity) || quantity <= 0) return;
+        productSales.set(key, {
+          name: productName,
+          count: (productSales.get(key)?.count || 0) + quantity
+        });
+      });
+    });
+    return [...productSales.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  }, [revenueOrders, revenueRange.monthStart, revenueRange.monthEnd]);
+
+  const selectedMonthLabel = new Date(`${revenueRange.monthStart}T00:00:00`).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric'
+  });
 
   const filteredOrders = orders.filter((ord) => {
     const paymentMethod = String(ord.paymentMethod || '').toUpperCase();
@@ -224,12 +278,9 @@ export const ManualOrdersPage = () => {
     const customerId = order.customerId || order.customer?.customerId || order.customer?.id;
     const paymentMethod = String(order.paymentMethod || '').toUpperCase();
     const totalAmount = Number(order.totalAmount ?? order.total ?? 0);
-    const previousBalanceDue = Number(order.balanceDue ?? (paymentMethod === 'CREDIT' ? totalAmount : 0));
-    const isCreditSale = paymentMethod === 'CREDIT' ||
-      (paymentMethod === 'MIXED' && previousBalanceDue > 0);
-    const ledgerAdjustment = isCreditSale
-      ? (wasPaid ? totalAmount : previousBalanceDue || totalAmount)
-      : 0;
+    const previousAmountPaid = Number(order.amountPaid ?? (wasPaid ? totalAmount : 0));
+    const previousBalanceDue = Number(order.balanceDue ?? Math.max(0, totalAmount - previousAmountPaid));
+    const ledgerAdjustment = wasPaid ? previousAmountPaid : previousBalanceDue;
 
     let ledgerUpdated = false;
     setUpdatingPaymentOrderIds((previous) => new Set(previous).add(orderKey));
@@ -447,13 +498,19 @@ export const ManualOrdersPage = () => {
           ['This Week Revenue', weekRevenue, 'bg-blue-50 border-blue-200 text-blue-800'],
           ['This Month Revenue', monthRevenue, 'bg-violet-50 border-violet-200 text-violet-800']
         ].map(([label, value, style]) => (
-          <div key={label} className={`p-4 border rounded-xl ${style}`}>
+          <button
+            key={label}
+            type="button"
+            onClick={() => label === 'This Month Revenue' && setRevenueModalView('menu')}
+            className={`p-4 text-left border rounded-xl ${style} ${label === 'This Month Revenue' ? 'cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-violet-400' : ''}`}
+          >
             <div className="text-xs font-bold uppercase tracking-wide opacity-80">{label}</div>
             <div className="mt-1 text-2xl font-black font-mono">{formatCurrency(value)}</div>
             <div className="mt-1 text-[11px] opacity-70">
               Manual orders{areaFilter !== 'ALL' ? ` • ${areaFilter}` : ''}
             </div>
-          </div>
+            {label === 'This Month Revenue' && <div className="mt-2 text-[11px] font-bold opacity-80">Click to view sales breakdown →</div>}
+          </button>
         ))}
       </div>
 
@@ -539,6 +596,36 @@ export const ManualOrdersPage = () => {
           setSelectedOrderIds(checked ? filteredOrders.map((o) => o.id) : []);
         }}
       />
+
+      {revenueModalView && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/45" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setRevenueModalView(null);
+        }}>
+          <div className="w-full max-w-lg overflow-hidden bg-white border shadow-2xl rounded-2xl border-slate-200">
+            <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <p className="text-[11px] font-bold tracking-widest uppercase text-violet-600">{selectedMonthLabel}</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">{revenueModalView === 'menu' ? 'This Month Revenue' : revenueModalView === 'days' ? 'Month Wise Sales' : 'Product Wise Sales in Month'}</h2>
+                {revenueModalView === 'menu' && <p className="mt-1 text-xs text-slate-500">Choose how you want to view this month&apos;s sales.</p>}
+              </div>
+              <button type="button" onClick={() => setRevenueModalView(null)} className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100" aria-label="Close revenue popup"><X className="w-5 h-5" /></button>
+            </div>
+
+            {revenueModalView === 'menu' && <div className="grid gap-3 p-5 sm:grid-cols-2">
+              <button type="button" onClick={() => setRevenueModalView('days')} className="flex items-center justify-between p-4 text-left transition-colors border rounded-xl border-violet-200 bg-violet-50 hover:bg-violet-100">
+                <span className="flex items-center gap-3"><CalendarRange className="w-5 h-5 text-violet-600" /><span><span className="block text-sm font-bold text-slate-900">Month Wise Sales</span><span className="block mt-1 text-[11px] text-slate-500">Daily sales total</span></span></span><ChevronRight className="w-4 h-4 text-violet-500" />
+              </button>
+              <button type="button" onClick={() => setRevenueModalView('products')} className="flex items-center justify-between p-4 text-left transition-colors border rounded-xl border-emerald-200 bg-emerald-50 hover:bg-emerald-100">
+                <span className="flex items-center gap-3"><Package className="w-5 h-5 text-emerald-600" /><span><span className="block text-sm font-bold text-slate-900">Product Wise Sales in Month</span><span className="block mt-1 text-[11px] text-slate-500">Quantity by product</span></span></span><ChevronRight className="w-4 h-4 text-emerald-500" />
+              </button>
+            </div>}
+
+            {revenueModalView === 'days' && <div className="p-5"><button type="button" onClick={() => setRevenueModalView('menu')} className="mb-3 text-xs font-bold text-violet-700 hover:underline">← Back to sales views</button><div className="pr-1 overflow-y-auto max-h-[55vh]">{monthSalesByDay.map((day) => <div key={day.dateKey} className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0"><span className="text-sm font-semibold text-slate-700">{day.label}</span><span className={`text-sm font-black font-mono ${day.amount > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>{formatCurrency(day.amount)}</span></div>)}</div></div>}
+
+            {revenueModalView === 'products' && <div className="p-5"><button type="button" onClick={() => setRevenueModalView('menu')} className="mb-3 text-xs font-bold text-emerald-700 hover:underline">← Back to sales views</button>{monthProductSales.length === 0 ? <p className="py-8 text-sm text-center text-slate-400">No product sales recorded for this month.</p> : <div className="pr-1 overflow-y-auto max-h-[55vh] space-y-4">{monthProductSales.map((product, index) => { const maxCount = monthProductSales[0].count || 1; const width = Math.max(4, (product.count / maxCount) * 100); return <div key={`${product.name}-${index}`}><div className="flex items-center justify-between gap-3 mb-1.5"><span className="min-w-0 text-sm font-semibold truncate text-slate-700">{product.name}</span><span className="text-sm font-black text-slate-900">{product.count}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${width}%` }} /></div></div>; })}</div>}</div>}
+          </div>
+        </div>
+      )}
 
       <OrderDetailModal
         isOpen={detailModalOpen}

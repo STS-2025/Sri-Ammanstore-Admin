@@ -318,6 +318,7 @@ service cloud.firestore {
             'verifiedToken',
             'connectedDeviceId',
             'connectedDeviceName',
+            'connectedDeviceModel',
             'connectedAt',
             'lastActivityAt',
             'disconnectedAt'

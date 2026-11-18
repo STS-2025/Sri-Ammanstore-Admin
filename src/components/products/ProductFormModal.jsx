@@ -16,8 +16,8 @@ import {
 import { FormModal } from '../common/FormModal';
 import { ImageUploader } from '../common/ImageUploader';
 import { VideoUploader } from '../common/VideoUploader';
-import { INITIAL_CATEGORIES, INITIAL_BRANDS } from '../../data/grocerySeedData';
 import { getAllCategories } from '../../firebase/categoryService';
+import { getAllBrands } from '../../firebase/brandService';
 import { formatCurrency } from '../../utils/formatters';
 
 const TABS = [
@@ -37,6 +37,7 @@ export const ProductFormModal = ({
 }) => {
   const [activeTab, setActiveTab] = useState('basic');
   const [categories, setCategories] = useState([]);
+  const [brands, setBrands] = useState([]);
 
   // Load live categories strictly from Firestore / LocalStorage
   useEffect(() => {
@@ -65,6 +66,19 @@ export const ProductFormModal = ({
     return () => { isMounted = false; };
   }, [isOpen, initialData]);
 
+  useEffect(() => {
+    let isMounted = true;
+    if (!isOpen) return () => { isMounted = false; };
+
+    getAllBrands()
+      .then((liveBrands) => {
+        if (isMounted && Array.isArray(liveBrands)) setBrands(liveBrands);
+      })
+      .catch((err) => console.warn('Failed to load live brands:', err));
+
+    return () => { isMounted = false; };
+  }, [isOpen]);
+
   // Form State
   const [formData, setFormData] = useState({
     name: '',
@@ -73,8 +87,8 @@ export const ProductFormModal = ({
     categoryId: 'cat-spices',
     categoryName: 'Spices & Masala Powders',
     subCategory: 'Chilli & Coriander Powders',
-    brandId: 'brand-aachi',
-    brandName: 'Aachi Masala',
+    brandId: '',
+    brandName: '',
     description: '',
     benefits: '',
     ingredients: '',
@@ -168,8 +182,8 @@ export const ProductFormModal = ({
         categoryId: String(matchedCat ? matchedCat.id : (initialData.categoryId || initialData.categoryName || initialData.category || categories[0]?.id || '')),
         categoryName: String(matchedCat ? matchedCat.name : (initialData.categoryName || initialData.category || categories[0]?.name || '')),
         subCategory: String(initialData.subCategory || initialData.subcategory || ''),
-        brandId: String(initialData.brandId || 'brand-aachi'),
-        brandName: String(initialData.brandName || 'Aachi Masala'),
+        brandId: String(initialData.brandId || ''),
+        brandName: String(initialData.brandName || ''),
         description: typeof initialData.description === 'string' ? initialData.description : '',
         benefits: typeof initialData.benefits === 'string' ? initialData.benefits : '',
         ingredients: typeof initialData.ingredients === 'string' ? initialData.ingredients : '',
@@ -202,8 +216,8 @@ export const ProductFormModal = ({
         categoryId: categories[0]?.id || 'cat-spices',
         categoryName: categories[0]?.name || 'Spices & Masala Powders',
         subCategory: categories[0]?.subcategories?.[0] || '',
-        brandId: 'brand-aachi',
-        brandName: 'Aachi Masala',
+        brandId: '',
+        brandName: '',
         description: '',
         benefits: '',
         ingredients: '',
@@ -290,7 +304,7 @@ export const ProductFormModal = ({
 
   // Handle Brand changes
   const handleBrandChange = (brandId) => {
-    const found = INITIAL_BRANDS.find((b) => b.id === brandId);
+    const found = brands.find((b) => b.id === brandId);
     setFormData((prev) => ({
       ...prev,
       brandId,
@@ -605,7 +619,8 @@ export const ProductFormModal = ({
                   onChange={(e) => handleBrandChange(e.target.value)}
                   className="input-text text-xs"
                 >
-                  {INITIAL_BRANDS.map((b) => (
+                  <option value="">Select a brand</option>
+                  {brands.filter((b) => b.status !== 'inactive').map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name} ({b.origin})
                     </option>

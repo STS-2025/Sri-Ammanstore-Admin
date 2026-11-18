@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Printer,
   FileText,
@@ -11,6 +11,30 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
+import { getAllProducts } from '../../firebase/productService';
+
+const getItemStorageLocation = (item, products) => {
+  const productId = item.productId || item.productID || item.product?.id;
+  const product = products.find((candidate) =>
+    (productId && candidate.id === productId) ||
+    (item.sku && (candidate.sku === item.sku || candidate.variants?.some((variant) => variant.sku === item.sku))) ||
+    (item.barcode && (candidate.barcode === item.barcode || candidate.variants?.some((variant) => variant.barcode === item.barcode)))
+  );
+  const variant = product?.variants?.find((candidate) =>
+    (item.variantId && candidate.id === item.variantId) ||
+    (item.sku && candidate.sku === item.sku) ||
+    (item.barcode && candidate.barcode === item.barcode)
+  ) || product?.variants?.[0];
+
+  const locationFor = (source, field) =>
+    source?.[field] || source?.storage?.[field] || source?.location?.[field] || '';
+
+  return {
+    rack: locationFor(item, 'rack') || locationFor(variant, 'rack') || locationFor(product, 'rack') || '—',
+    shelf: locationFor(item, 'shelf') || locationFor(variant, 'shelf') || locationFor(product, 'shelf') || '—',
+    bin: locationFor(item, 'bin') || locationFor(variant, 'bin') || locationFor(product, 'bin') || '—'
+  };
+};
 
 export const PrintableDocumentsModal = ({
   isOpen,
@@ -20,19 +44,128 @@ export const PrintableDocumentsModal = ({
   initialDocType = 'invoice' // 'invoice' | 'store_invoice' | 'parcel_label' | 'manifest' | 'cod_sheet'
 }) => {
   const [docType, setDocType] = useState(initialDocType);
+  const [products, setProducts] = useState([]);
+  const productsLoadPromise = useRef(Promise.resolve([]));
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    let isCurrent = true;
+    productsLoadPromise.current = getAllProducts();
+    productsLoadPromise.current
+      .then((catalog) => {
+        if (isCurrent) setProducts(catalog);
+      })
+      .catch((error) => {
+        console.error('Failed to load product locations for the picking slip:', error);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) setDocType(initialDocType);
+  }, [isOpen, initialDocType]);
 
   if (!isOpen) return null;
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    if (docType === 'store_invoice') {
+      try {
+        const catalog = await productsLoadPromise.current;
+        setProducts(catalog);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      } catch (error) {
+        console.error('Failed to load product locations before printing:', error);
+      }
+    }
     window.print();
   };
 
   const activeOrder = order || orders[0] || {};
   const manifestOrders = orders.length > 0 ? orders : order ? [order] : [];
+  const printPageSize = docType === 'parcel_label' ? '4in 6in' : 'A4';
+  const printPageMargin = docType === 'parcel_label' ? '0' : '12mm';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-      <div className="w-full max-w-4xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-modal border border-slate-200 overflow-hidden">
+    <div className="order-document-print-root fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+      <style>{`
+        @media print {
+          @page { size: ${printPageSize}; margin: ${printPageMargin}; }
+          html, body, #root {
+            width: auto !important;
+            min-width: 0 !important;
+            height: auto !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+          body:has(.order-document-print-root) {
+            overflow: hidden !important;
+          }
+          body:has(.order-document-print-root) #root {
+            height: 0 !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+          }
+          .order-document-print-root {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: auto !important;
+            display: block !important;
+            width: auto !important;
+            height: auto !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            transform: none !important;
+            background: #fff !important;
+            backdrop-filter: none !important;
+          }
+          .order-document-print-root,
+          .order-document-print-root * {
+            visibility: visible !important;
+          }
+          .order-document-print-shell {
+            display: block !important;
+            width: auto !important;
+            max-width: none !important;
+            max-height: none !important;
+            overflow: visible !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+          }
+          .order-document-print-body {
+            display: block !important;
+            width: auto !important;
+            height: auto !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+            padding: 0 !important;
+            background: #fff !important;
+          }
+          .order-document-print-page {
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 auto !important;
+            box-shadow: none !important;
+          }
+          .order-document-print-page-parcel-label {
+            width: 4in !important;
+            max-width: 4in !important;
+            min-height: 6in !important;
+            padding: 0.2in !important;
+            border-radius: 0 !important;
+          }
+        }
+      `}</style>
+      <div className="order-document-print-shell w-full max-w-4xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-modal border border-slate-200 overflow-hidden">
         {/* Document Switcher Toolbar (Hidden during print) */}
         <div className="print:hidden flex items-center justify-between p-4 border-b border-slate-200 bg-slate-50">
           <div className="flex items-center gap-1.5 overflow-x-auto">
@@ -80,10 +213,10 @@ export const PrintableDocumentsModal = ({
         </div>
 
         {/* Printable Paper Canvas */}
-        <div className="flex-1 overflow-y-auto p-6 sm:p-8 bg-white font-sans text-slate-900 print:p-0 print:overflow-visible">
+        <div className="order-document-print-body flex-1 overflow-y-auto p-6 sm:p-8 bg-white font-sans text-slate-900 print:p-0 print:overflow-visible">
           {/* 1. CUSTOMER TAX INVOICE */}
           {docType === 'invoice' && (
-            <div className="max-w-2xl mx-auto border border-slate-200 p-6 rounded-xl space-y-6 print:border-none print:p-0">
+            <div className="order-document-print-page max-w-2xl mx-auto border border-slate-200 p-6 rounded-xl space-y-6 print:border-none print:p-0">
               {/* Invoice Header */}
               <div className="flex items-start justify-between border-b pb-4">
                 <div>
@@ -209,7 +342,7 @@ export const PrintableDocumentsModal = ({
 
           {/* 2. STORE PICKING SLIP */}
           {docType === 'store_invoice' && (
-            <div className="max-w-2xl mx-auto border border-slate-200 p-6 rounded-xl space-y-4 print:border-none print:p-0">
+            <div className="order-document-print-page max-w-2xl mx-auto border border-slate-200 p-6 rounded-xl space-y-4 print:border-none print:p-0">
               <div className="flex items-center justify-between border-b pb-3">
                 <div>
                   <h3 className="text-base font-bold">WAREHOUSE PICKING & FULFILLMENT SLIP</h3>
@@ -233,28 +366,37 @@ export const PrintableDocumentsModal = ({
                     <th className="py-2 px-2">SKU & Barcode</th>
                     <th className="py-2 px-2">Product Name</th>
                     <th className="py-2 px-2">Pack</th>
+                    <th className="py-2 px-2">Rack</th>
+                    <th className="py-2 px-2">Shelf</th>
+                    <th className="py-2 px-2">Bin</th>
                     <th className="py-2 px-2 text-center">Req Qty</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(activeOrder.items || []).map((item, idx) => (
-                    <tr key={idx}>
-                      <td className="py-2.5 px-2">
-                        <div className="w-4 h-4 border-2 border-slate-400 rounded" />
-                      </td>
-                      <td className="py-2.5 px-2 font-mono text-slate-600">
-                        {item.sku}<br />
-                        <span className="text-[10px] text-slate-400">{item.barcode}</span>
-                      </td>
-                      <td className="py-2.5 px-2 font-bold text-slate-900">
-                        {item.productName}
-                      </td>
-                      <td className="py-2.5 px-2 font-mono text-slate-600">{item.variantName}</td>
-                      <td className="py-2.5 px-2 text-center font-mono font-bold text-sm text-emerald-800">
-                        {item.quantity}
-                      </td>
-                    </tr>
-                  ))}
+                  {(activeOrder.items || []).map((item, idx) => {
+                    const location = getItemStorageLocation(item, products);
+                    return (
+                      <tr key={idx}>
+                        <td className="py-2.5 px-2">
+                          <div className="w-4 h-4 border-2 border-slate-400 rounded" />
+                        </td>
+                        <td className="py-2.5 px-2 font-mono text-slate-600">
+                          {item.sku}<br />
+                          <span className="text-[10px] text-slate-400">{item.barcode}</span>
+                        </td>
+                        <td className="py-2.5 px-2 font-bold text-slate-900">
+                          {item.productName}
+                        </td>
+                        <td className="py-2.5 px-2 font-mono text-slate-600">{item.variantName}</td>
+                        <td className="py-2.5 px-2 font-mono">{location.rack}</td>
+                        <td className="py-2.5 px-2 font-mono">{location.shelf}</td>
+                        <td className="py-2.5 px-2 font-mono">{location.bin}</td>
+                        <td className="py-2.5 px-2 text-center font-mono font-bold text-sm text-emerald-800">
+                          {item.quantity}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
@@ -267,7 +409,7 @@ export const PrintableDocumentsModal = ({
 
           {/* 3. PARCEL SHIPPING LABEL (4x6 Thermal Label Format) */}
           {docType === 'parcel_label' && (
-            <div className="max-w-md mx-auto border-2 border-slate-900 p-5 rounded-2xl space-y-4 print:border-2 print:border-black">
+            <div className="order-document-print-page order-document-print-page-parcel-label max-w-md mx-auto border-2 border-slate-900 p-5 rounded-2xl space-y-4 print:border-2 print:border-black">
               {/* Store & Hub */}
               <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
                 <div className="flex items-center gap-2">
@@ -333,7 +475,7 @@ export const PrintableDocumentsModal = ({
 
           {/* 4. DELIVERY MANIFEST & 5. COD SHEET */}
           {(docType === 'manifest' || docType === 'cod_sheet') && (
-            <div className="space-y-4">
+            <div className="order-document-print-page space-y-4">
               <div className="flex items-center justify-between border-b pb-3">
                 <div>
                   <h3 className="text-base font-bold font-sans">

@@ -385,7 +385,14 @@ export const DEFAULT_CUSTOMER_SETTINGS = {
   separator: '-',
   startingNumber: 1,
   numberLength: 6,
-  barcodeFormat: 'CODE128'
+  barcodeFormat: 'CODE128',
+  posInvoicePrefix: 'POS-INV-',
+  manualOrderStartingNumber: 1,
+  posInvoiceNumberLength: 6,
+  allowWalkInCustomer: true,
+  allowCreditSales: true,
+  requireCustomerForCredit: true,
+  defaultCreditLimit: 5000
 };
 
 /**
@@ -401,6 +408,22 @@ export const getCustomerSettings = () => {
   }
 };
 
+export const getCustomerSettingsAsync = async () => {
+  const localSettings = getCustomerSettings();
+  if (!isFirebaseConfigured) return localSettings;
+
+  try {
+    const snapshot = await getDoc(doc(db, COLLECTIONS.BUSINESS_SETTINGS, 'customerConfig'));
+    if (!snapshot.exists()) return localSettings;
+    const merged = { ...DEFAULT_CUSTOMER_SETTINGS, ...localSettings, ...snapshot.data() };
+    localStorage.setItem(CUSTOMER_SETTINGS_STORAGE_KEY, JSON.stringify(merged));
+    return merged;
+  } catch (error) {
+    console.warn('[Firestore] Load customer/POS settings failed; using local settings:', error);
+    return localSettings;
+  }
+};
+
 /**
  * Save Customer ID Configuration
  */
@@ -409,14 +432,10 @@ export const saveCustomerSettings = async (settings, user) => {
   localStorage.setItem(CUSTOMER_SETTINGS_STORAGE_KEY, JSON.stringify(merged));
 
   if (isFirebaseConfigured) {
-    try {
-      await setDoc(doc(db, COLLECTIONS.BUSINESS_SETTINGS, 'customerConfig'), {
-        ...merged,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-    } catch (e) {
-      console.error('[Firestore] Save customer settings failed:', e);
-    }
+    await setDoc(doc(db, COLLECTIONS.BUSINESS_SETTINGS, 'customerConfig'), {
+      ...merged,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
   }
 
   await logActivity({

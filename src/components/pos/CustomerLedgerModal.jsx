@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { X, CreditCard, DollarSign, ArrowDownLeft, ArrowUpRight, History, Plus, CheckCircle2, ShieldCheck } from 'lucide-react';
+import QRCode from 'qrcode';
+import { doc, getDoc } from 'firebase/firestore';
 import { getCustomerLedger, recordCustomerLedgerTransaction } from '../../firebase/customerService';
+import { getAllOrders, applyManualOrderPaymentAllocations } from '../../firebase/orderService';
+import { db, isFirebaseConfigured } from '../../firebase/config';
+import { COLLECTIONS } from '../../firebase/collections';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../hooks/useAuth';
@@ -17,9 +22,13 @@ export const CustomerLedgerModal = ({ isOpen, onClose, customer, onBalanceUpdate
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('CASH'); // CASH | UPI | CARD
   const [paymentReason, setPaymentReason] = useState('Customer Counter Payment');
+  const [showUpiQr, setShowUpiQr] = useState(false);
+  const [upiId, setUpiId] = useState('');
+  const [upiQrDataUrl, setUpiQrDataUrl] = useState('');
+  const [savingPayment, setSavingPayment] = useState(false);
 
   const customerId = customer?.customerId || customer?.id || '';
-  const currentBalance = Number(customer?.currentBalance || customer?.outstandingBalance || 0);
+  const currentBalance = Number(customer?.currentBalance ?? customer?.outstandingBalance ?? 0);
   const currentAdvance = Number(customer?.advanceBalance || 0);
 
   const fetchLedger = async () => {
@@ -45,15 +54,41 @@ export const CustomerLedgerModal = ({ isOpen, onClose, customer, onBalanceUpdate
 
   if (!isOpen || !customer) return null;
 
-  const handleRecordPayment = async (e) => {
-    e.preventDefault();
-    const amt = Number(paymentAmount);
+  const saveReceivedPayment = async (amount) => {
+    const amt = Number(amount);
     if (!amt || amt <= 0) {
       notify.error('Invalid Amount', 'Please enter a valid payment amount greater than zero.');
-      return;
+      return false;
+    }
+    if (amt > currentBalance) {
+      notify.error('Amount Exceeds Balance', 'Payment amount cannot be greater than the customer outstanding balance.');
+      return false;
     }
 
     try {
+      setSavingPayment(true);
+      const allManualOrders = await getAllOrders({ manualOnly: true });
+      const customerOrderIds = new Set([customer?.customerId, customer?.id].filter(Boolean).map(String));
+      const openBills = allManualOrders
+        .filter((order) => customerOrderIds.has(String(order.customerId || order.customer?.customerId || order.customer?.id || '')))
+        .map((order) => {
+          const total = Number(order.totalAmount ?? order.total ?? 0);
+          const paid = Number(order.amountPaid ?? 0);
+          return { order, balanceDue: Number(order.balanceDue ?? Math.max(0, total - paid)) };
+        })
+        .filter(({ balanceDue }) => balanceDue > 0)
+        .sort((first, second) => new Date(first.order.createdAt || 0) - new Date(second.order.createdAt || 0));
+
+      let unallocatedAmount = amt;
+      const allocations = [];
+      for (const bill of openBills) {
+        if (unallocatedAmount <= 0) break;
+        const allocationAmount = Math.min(bill.balanceDue, unallocatedAmount);
+        allocations.push({ orderId: bill.order.id || bill.order.orderNumber, amount: allocationAmount });
+        unallocatedAmount = Math.round((unallocatedAmount - allocationAmount) * 100) / 100;
+      }
+
+      await applyManualOrderPaymentAllocations(allocations, currentUser || { role: userRole });
       const res = await recordCustomerLedgerTransaction({
         customerId,
         type: 'PAYMENT',
@@ -68,12 +103,63 @@ export const CustomerLedgerModal = ({ isOpen, onClose, customer, onBalanceUpdate
       notify.success('Payment Recorded', `Successfully received ${formatCurrency(amt)} via ${paymentMethod}! New balance: ${formatCurrency(res.customer.currentBalance)}`);
       setShowReceivePayment(false);
       setPaymentAmount('');
+      setShowUpiQr(false);
       fetchLedger();
       if (onBalanceUpdated) {
         onBalanceUpdated(res.customer);
       }
+      return true;
     } catch (err) {
       notify.error('Payment Error', err.message);
+      return false;
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const handleRecordPayment = async (e) => {
+    e.preventDefault();
+    const amt = Number(paymentAmount);
+    if (!amt || amt <= 0 || amt > currentBalance) {
+      notify.error('Invalid Amount', amt > currentBalance
+        ? 'Payment amount cannot be greater than the customer outstanding balance.'
+        : 'Please enter a valid payment amount greater than zero.');
+      return;
+    }
+
+    if (paymentMethod !== 'UPI') {
+      await saveReceivedPayment(amt);
+      return;
+    }
+
+    try {
+      let settings = {};
+      try {
+        settings = JSON.parse(localStorage.getItem('grocery_admin_business_settings_v5') || '{}');
+      } catch (_) {}
+      if (isFirebaseConfigured) {
+        const settingsSnapshot = await getDoc(doc(db, COLLECTIONS.BUSINESS_SETTINGS, 'businessSettings'));
+        if (settingsSnapshot.exists()) {
+          settings = { ...settings, ...settingsSnapshot.data() };
+          localStorage.setItem('grocery_admin_business_settings_v5', JSON.stringify(settings));
+        }
+      }
+      const savedUpiId = String(settings.upiId || '').trim();
+      if (!savedUpiId) {
+        notify.error('UPI ID Required', 'Add your UPI ID in Settings before receiving a UPI payment.');
+        return;
+      }
+      const paymentUrl = `upi://pay?pa=${encodeURIComponent(savedUpiId)}&pn=${encodeURIComponent('Sri Amman Store')}&am=${amt.toFixed(2)}&cu=INR`;
+      const qrDataUrl = await QRCode.toDataURL(paymentUrl, {
+        width: 240,
+        margin: 2,
+        color: { dark: '#0f172a', light: '#ffffff' }
+      });
+      setUpiId(savedUpiId);
+      setUpiQrDataUrl(qrDataUrl);
+      setShowUpiQr(true);
+    } catch (error) {
+      notify.error('UPI QR Error', error.message || 'Could not generate the payment QR code.');
     }
   };
 
@@ -210,10 +296,11 @@ export const CustomerLedgerModal = ({ isOpen, onClose, customer, onBalanceUpdate
                 </button>
                 <button
                   type="submit"
+                  disabled={savingPayment}
                   className="btn-primary text-xs py-2 px-4 flex items-center gap-1.5 shadow-md"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Confirm & Save Payment</span>
+                  <span>{paymentMethod === 'UPI' ? 'Show UPI QR' : 'Confirm & Save Payment'}</span>
                 </button>
               </div>
             </form>
@@ -272,6 +359,33 @@ export const CustomerLedgerModal = ({ isOpen, onClose, customer, onBalanceUpdate
           )}
         </div>
       </div>
+      {showUpiQr && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <section role="dialog" aria-modal="true" aria-labelledby="received-upi-title" className="w-full max-w-sm overflow-hidden bg-white border shadow-2xl rounded-2xl border-slate-200">
+            <div className="flex items-center justify-between px-5 py-4 text-white bg-slate-900">
+              <div>
+                <h2 id="received-upi-title" className="text-sm font-extrabold">Receive UPI Payment</h2>
+                <p className="mt-1 text-[11px] text-slate-300">Scan this QR code to pay</p>
+              </div>
+              <button type="button" onClick={() => setShowUpiQr(false)} className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white" aria-label="Close UPI QR popup">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3 text-center">
+              <p className="text-xl font-black text-emerald-800">{formatCurrency(Number(paymentAmount))}</p>
+              <p className="font-mono text-xs text-slate-500">{upiId}</p>
+              {upiQrDataUrl && <img src={upiQrDataUrl} alt={`UPI payment QR for ${formatCurrency(Number(paymentAmount))}`} className="w-56 h-56 p-2 mx-auto bg-white border rounded-xl border-slate-200" />}
+              <p className="text-[11px] text-slate-500">After confirming the payment was received, save it to update the customer balance and bills.</p>
+              <div className="flex justify-center gap-2 pt-1">
+                <button type="button" disabled={savingPayment} onClick={() => setShowUpiQr(false)} className="btn-secondary text-xs py-2 px-4">Cancel</button>
+                <button type="button" disabled={savingPayment} onClick={async () => { if (await saveReceivedPayment(Number(paymentAmount))) setShowUpiQr(false); }} className="btn-primary text-xs py-2 px-4 disabled:opacity-50">
+                  {savingPayment ? 'Saving…' : 'Payment Received & Save'}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 };

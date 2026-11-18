@@ -89,7 +89,8 @@ export const MobileScannerConnectPage = () => {
         sessionId,
         token,
         deviceId,
-        deviceName
+        deviceName,
+        deviceModel: null
       });
 
       setConnected(true);

@@ -133,7 +133,7 @@ export const MarketingPage = () => {
   // Announcement Actions
   const handleSaveAnnouncement = async (formData) => {
     try {
-      await saveAnnouncement(formData, currentUser);
+      await saveAnnouncement(selectedAnnouncementForEdit ? { ...formData, id: selectedAnnouncementForEdit.id } : formData, currentUser);
       setIsAnnouncementModalOpen(false);
       setSelectedAnnouncementForEdit(null);
       await loadAllMarketingData();

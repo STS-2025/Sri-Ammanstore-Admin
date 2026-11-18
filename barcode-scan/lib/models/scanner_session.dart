@@ -13,6 +13,7 @@ class ScannerSession {
   final DateTime expiresAt;
   final DateTime? connectedAt;
   final String? scannerId;
+  final String? connectedDeviceModel;
 
   ScannerSession({
     required this.sessionId,
@@ -27,6 +28,7 @@ class ScannerSession {
     required this.expiresAt,
     this.connectedAt,
     this.scannerId,
+    this.connectedDeviceModel,
   });
 
   static DateTime _parseDate(dynamic val, {DateTime? fallback}) {
@@ -74,6 +76,7 @@ class ScannerSession {
       expiresAt: _parseDate(data['expiresAt'], fallback: DateTime.now().add(const Duration(hours: 12))),
       connectedAt: data['connectedAt'] != null ? _parseDate(data['connectedAt']) : null,
       scannerId: data['scannerId']?.toString(),
+      connectedDeviceModel: data['connectedDeviceModel']?.toString(),
     );
   }
 
@@ -91,6 +94,7 @@ class ScannerSession {
       expiresAt: _parseDate(json['expiresAt'], fallback: DateTime.now().add(const Duration(hours: 12))),
       connectedAt: json['connectedAt'] != null ? _parseDate(json['connectedAt']) : DateTime.now(),
       scannerId: json['scannerId']?.toString() ?? 'SCANNER_FLUTTER_01',
+      connectedDeviceModel: json['connectedDeviceModel']?.toString(),
     );
   }
 
@@ -108,6 +112,7 @@ class ScannerSession {
       'expiresAt': Timestamp.fromDate(expiresAt),
       'connectedAt': connectedAt != null ? Timestamp.fromDate(connectedAt!) : null,
       'scannerId': scannerId,
+      'connectedDeviceModel': connectedDeviceModel,
     };
   }
 }

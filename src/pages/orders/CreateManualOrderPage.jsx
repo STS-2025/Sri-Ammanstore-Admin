@@ -1,14 +1,20 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ShoppingCart, Search, Barcode as BarcodeIcon, UserPlus, UserCheck, User,
   Plus, Minus, Trash2, CreditCard, DollarSign, Clock, CheckCircle2, AlertTriangle,
-  MapPin, Tag, ChevronRight, RefreshCw, Printer, ShieldAlert, Zap, History, ChevronDown, X, Smartphone
+  MapPin, Tag, ChevronRight, RefreshCw, Printer, ShieldAlert, Zap, History, ChevronDown, X, Smartphone,
+  IndianRupee
 } from 'lucide-react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { getAllProducts } from '../../firebase/productService';
-import { getAllCustomers, recordCustomerLedgerTransaction, getCustomerSettings } from '../../firebase/customerService';
+import { getAllCustomers, recordCustomerLedgerTransaction, getCustomerSettingsAsync } from '../../firebase/customerService';
 import { recordStockMovement } from '../../firebase/inventoryService';
-import { listenToScanEvents, updateScanEventResult } from '../../firebase/scannerService';
+import {
+  getActiveScannerSessionForUser,
+  getScannerSession,
+  listenToScanEvents,
+  updateScanEventResult
+} from '../../firebase/scannerService';
 import { logActivity } from '../../firebase/auditLogger';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
@@ -16,6 +22,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS } from '../../utils/permissions';
 import { COLLECTIONS } from '../../firebase/collections';
+import { getAllOrders } from '../../firebase/orderService';
 import { db, isFirebaseConfigured } from '../../firebase/config';
 import { collection, doc, getDoc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import QRCode from 'qrcode';
@@ -31,6 +38,7 @@ import { MobileScannerModal } from '../../components/pos/MobileScannerModal';
 const HELD_BILLS_KEY = 'grocery_admin_pos_held_bills_v1';
 const RECENT_BILLS_KEY = 'grocery_admin_pos_recent_bills_v1';
 const SETTINGS_LOCAL_KEY = 'grocery_admin_business_settings_v5';
+const getActiveScannerSessionKey = (userId) => `grocery_admin_active_scanner_session_v1_${userId}`;
 
 const getStorageLocation = (product = {}, variant = {}) => ({
   rack: product.rack || product.location?.rack || variant.rack || variant.location?.rack || '',
@@ -39,12 +47,19 @@ const getStorageLocation = (product = {}, variant = {}) => ({
   section: product.location?.section || variant.location?.section || ''
 });
 
+const normalizeProductSearchText = (value = '') => String(value)
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .trim();
+
 export const CreateManualOrderPage = () => {
   const notify = useNotification();
   const { currentUser, userRole } = useAuth();
   const { can } = usePermissions();
   const location = useLocation();
   const navigate = useNavigate();
+  const { manualOrderFontSize = 'normal' } = useOutletContext() || {};
 
   // Master lists
   const [products, setProducts] = useState([]);
@@ -121,6 +136,7 @@ export const CreateManualOrderPage = () => {
   const [isBarcodeCardModalOpen, setIsBarcodeCardModalOpen] = useState(false);
   const [isLedgerModalOpen, setIsLedgerModalOpen] = useState(false);
   const [isHoldBillsModalOpen, setIsHoldBillsModalOpen] = useState(false);
+  const [isRecentBillsModalOpen, setIsRecentBillsModalOpen] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [completedOrder, setCompletedOrder] = useState(null);
   const [editingOrderId, setEditingOrderId] = useState(null);
@@ -132,6 +148,43 @@ export const CreateManualOrderPage = () => {
   const [mobileScanCount, setMobileScanCount] = useState(0);
   const processingScanEventIdsRef = useRef(new Set());
   const previousBillTotalRef = useRef(0);
+
+  useEffect(() => {
+    if (!currentUser?.uid) return undefined;
+
+    let cancelled = false;
+    const storageKey = getActiveScannerSessionKey(currentUser.uid);
+
+    const restoreScannerSession = async () => {
+      try {
+        const sessionId = localStorage.getItem(storageKey);
+        const storedSession = sessionId ? await getScannerSession(sessionId) : null;
+        const isRestorable = (session) => (
+          session?.billingUserId === currentUser.uid &&
+          ['CONNECTED', 'WAITING_FOR_MOBILE'].includes(session.status) &&
+          Date.parse(session.expiresAt || '') > Date.now()
+        );
+        const session = isRestorable(storedSession)
+          ? storedSession
+          : await getActiveScannerSessionForUser(currentUser.uid);
+
+        if (cancelled) return;
+        if (isRestorable(session)) {
+          localStorage.setItem(storageKey, session.sessionId);
+          setActiveScannerSession(session);
+          return;
+        }
+
+        localStorage.removeItem(storageKey);
+      } catch (error) {
+        console.error('[CreateManualOrderPage] Could not restore scanner session:', error);
+        notify.error('Scanner Session Error', 'Could not restore the connected scanner session.');
+      }
+    };
+
+    restoreScannerSession();
+    return () => { cancelled = true; };
+  }, [currentUser?.uid]);
 
   const editOrder = location.state?.order || null;
   const isEditMode = location.state?.mode === 'edit' && Boolean(editOrder);
@@ -200,7 +253,7 @@ export const CreateManualOrderPage = () => {
 
   // Realtime Listener for Mobile Barcode Scans
   useEffect(() => {
-    if (!activeScannerSession?.sessionId) return;
+    if (!activeScannerSession?.sessionId || loadingData || products.length === 0) return;
 
     const unsubscribe = listenToScanEvents(activeScannerSession.sessionId, async (pendingEvents) => {
       for (const event of pendingEvents) {
@@ -296,7 +349,7 @@ export const CreateManualOrderPage = () => {
     });
 
     return () => unsubscribe();
-  }, [activeScannerSession?.sessionId, products]);
+  }, [activeScannerSession?.sessionId, loadingData, products]);
 
   // Barcode Scanner Mode
   const [scannerMode, setScannerMode] = useState(null); // 'PRODUCT' | 'CUSTOMER' | null
@@ -305,6 +358,7 @@ export const CreateManualOrderPage = () => {
   // Refs for keyboard navigation
   const productSearchRef = useRef(null);
   const customerSearchRef = useRef(null);
+  const paymentModeButtonRefs = useRef([]);
 
   // Fetch initial master data
   const loadMasterData = async () => {
@@ -380,13 +434,13 @@ export const CreateManualOrderPage = () => {
       setShowProductDropdown(false);
       return;
     }
-    const q = productSearchQuery.toLowerCase().trim();
-
+    const queryTokens = normalizeProductSearchText(productSearchQuery).split(/\s+/).filter(Boolean);
     const matches = [];
+    const seenMatches = new Set();
     products.forEach((p) => {
-      const pName = (p.name || '').toLowerCase();
-      const pTamil = (p.tamilName || '').toLowerCase();
-      const pBrand = (p.brandName || '').toLowerCase();
+      const pName = normalizeProductSearchText(p.name);
+      const pTamil = normalizeProductSearchText(p.tamilName);
+      const pBrand = normalizeProductSearchText(p.brandName);
 
       // Check variants
       const variants = Array.isArray(p.variants) && p.variants.length > 0 ? p.variants : [{
@@ -400,18 +454,19 @@ export const CreateManualOrderPage = () => {
       }];
 
       variants.forEach((v) => {
-        const vSku = (v.sku || '').toLowerCase();
-        const vBarcode = (v.barcode || '').toLowerCase();
-        const vName = (v.name || '').toLowerCase();
+        const vSku = normalizeProductSearchText(v.sku);
+        const vBarcode = normalizeProductSearchText(v.barcode);
+        const vName = normalizeProductSearchText(v.name);
+        const searchableText = [pName, pTamil, pBrand, vName, vSku, vBarcode].filter(Boolean).join(' ');
+        const matchesAllTokens = queryTokens.every((token) => searchableText.includes(token));
 
-        if (
-          pName.includes(q) ||
-          pTamil.includes(q) ||
-          pBrand.includes(q) ||
-          vSku.includes(q) ||
-          vBarcode.includes(q) ||
-          vName.includes(q)
-        ) {
+        if (matchesAllTokens) {
+          const matchKey = `${p.id}-${v.id}`;
+          if (seenMatches.has(matchKey)) return;
+          seenMatches.add(matchKey);
+          const exactness = [pName, pTamil, pBrand, vName, vSku, vBarcode];
+          const startsWithScore = exactness.some((field) => field === queryTokens.join(' ')) ? 0
+            : exactness.some((field) => field.startsWith(queryTokens[0])) ? 1 : 2;
           matches.push({
             productId: p.id,
             productName: p.name,
@@ -425,13 +480,15 @@ export const CreateManualOrderPage = () => {
             stock: Number(v.stock ?? p.stock ?? 10),
             sku: v.sku || p.sku || `SKU-${p.id}`,
             barcode: v.barcode || p.barcode || '',
-            location: getStorageLocation(p, v)
+            location: getStorageLocation(p, v),
+            startsWithScore
           });
         }
       });
     });
 
-    setFilteredProducts(matches.slice(0, 10));
+    matches.sort((a, b) => a.startsWithScore - b.startsWithScore || a.productName.localeCompare(b.productName));
+    setFilteredProducts(matches.slice(0, 12));
     setShowProductDropdown(true);
   }, [productSearchQuery, products]);
 
@@ -441,6 +498,7 @@ export const CreateManualOrderPage = () => {
     setCustomerSearchQuery('');
     setShowCustomerDropdown(false);
     notify.info('Customer Selected', `${customer.name} (${customer.customerId || customer.id}) set for billing session.`);
+    window.requestAnimationFrame(() => productSearchRef.current?.focus());
   };
 
   // Add Product to Cart
@@ -495,7 +553,16 @@ export const CreateManualOrderPage = () => {
   };
 
   // Quantity Change in Cart
-  const handleUpdateQuantity = (cartItemId, newQty) => {
+  /*const handleUpdateQuantity = (cartItemId, newQty) => {
+    if (newQty === '') {
+      setCartItems((prevCart) => prevCart.map((item) => (
+        item.id === cartItemId
+          ? { ...item, quantity: '', totalPrice: 0 }
+          : item
+      )));
+      return;
+    }
+
     const qty = Number(newQty);
     if (isNaN(qty) || qty <= 0) {
       handleRemoveFromCart(cartItemId);
@@ -514,7 +581,65 @@ export const CreateManualOrderPage = () => {
         return item;
       })
     );
-  };
+  };*/
+  const handleUpdateQuantity = (cartItemId, newQty) => {
+  if (newQty === '') {
+    setCartItems((prevCart) =>
+      prevCart.map((item) =>
+        item.id === cartItemId
+          ? { ...item, quantity: '', totalPrice: 0 }
+          : item
+      )
+    );
+    return;
+  }
+
+  const qty = Number(newQty);
+
+  if (isNaN(qty) || qty <= 0) {
+    handleRemoveFromCart(cartItemId);
+    return;
+  }
+
+  const currentItem = cartItems.find(
+    (item) => item.id === cartItemId
+  );
+
+  if (!currentItem) return;
+
+  if (qty > currentItem.availableStock) {
+    notify.warning(
+      'Stock Limit Reached',
+      `Only ${currentItem.availableStock} units available in inventory.`
+    );
+
+    setCartItems((prevCart) =>
+      prevCart.map((item) =>
+        item.id === cartItemId
+          ? {
+              ...item,
+              quantity: item.availableStock,
+              totalPrice: item.availableStock * item.unitPrice
+            }
+          : item
+      )
+    );
+
+    return;
+  }
+
+  setCartItems((prevCart) =>
+    prevCart.map((item) =>
+      item.id === cartItemId
+        ? {
+            ...item,
+            quantity: qty,
+            totalPrice: qty * item.unitPrice
+          }
+        : item
+    )
+  );
+};
 
   // Remove Item from Cart
   const handleRemoveFromCart = (cartItemId) => {
@@ -732,7 +857,8 @@ export const CreateManualOrderPage = () => {
   };
 
   // Complete Billing Submission
-  const handleCompleteBilling = async ({ autoPrint = false, paidAmountOverride } = {}) => {
+  const handleCompleteBilling = async ({ autoPrint = false, paidAmountOverride, paymentMethodOverride } = {}) => {
+    const billingPaymentMethod = paymentMethodOverride || paymentMethod;
     if (isCompletingBilling) return;
     if (cartItems.length === 0) {
       notify.error('Empty Cart', 'Add at least one product to the cart before completing billing.');
@@ -744,6 +870,16 @@ export const CreateManualOrderPage = () => {
       notify.error('Invalid Paid Amount', 'Enter a valid paid amount greater than or equal to ₹0.');
       return;
     }
+
+    
+      if (!Number.isInteger(amountPaid)) {
+        notify.error(
+          'Invalid Paid Amount',
+          'Paisa not allowed. Enter whole rupees only.'
+        );
+        return;
+      }
+
 
     const extraPayment = Math.max(0, Math.round((amountPaid - totalBillAmount) * 100) / 100);
     const selectedCustomerId = selectedCustomer?.customerId || selectedCustomer?.id;
@@ -766,7 +902,7 @@ export const CreateManualOrderPage = () => {
       ? 0
       : Math.min(customerAdvance, Math.max(0, totalBillAmount - amountPaid));
     const amountAppliedToBill = Math.min(totalBillAmount, amountPaid + advanceAppliedAmount);
-    const creditAmountDue = Math.max(0, totalBillAmount - amountAppliedToBill);
+    const creditAmountDue = Math.max(0, Math.round((totalBillAmount - amountAppliedToBill) * 100) / 100);
 
     if (creditAmountDue > 0) {
       if (!selectedCustomer || isWalkInCustomer) {
@@ -784,9 +920,22 @@ export const CreateManualOrderPage = () => {
     setIsCompletingBilling(true);
     try {
       const isEditing = isEditMode && Boolean(editOrder);
+      const posSettings = await getCustomerSettingsAsync();
+      const invoicePrefix = String(posSettings.posInvoicePrefix || 'POS-INV-');
+      const startingNumber = Math.max(1, Math.floor(Number(posSettings.manualOrderStartingNumber) || 1));
+      const numberLength = Math.max(1, Math.floor(Number(posSettings.posInvoiceNumberLength) || 6));
+      const existingManualOrders = await getAllOrders({ manualOnly: true });
+      const maxInvoiceSequence = existingManualOrders.reduce((maxSequence, order) => {
+        const orderNumber = String(order.orderNumber || '');
+        if (!orderNumber.startsWith(invoicePrefix)) return maxSequence;
+        const sequenceText = orderNumber.slice(invoicePrefix.length);
+        if (!/^\d+$/.test(sequenceText)) return maxSequence;
+        return Math.max(maxSequence, Number(sequenceText));
+      }, startingNumber - 1);
+      const nextInvoiceNumber = `${invoicePrefix}${String(maxInvoiceSequence + 1).padStart(numberLength, '0')}`;
       const orderNo = isEditing
-        ? (editingOrderNumber || editOrder?.orderNumber || `POS-INV-${Date.now().toString(36).toUpperCase()}`)
-        : `POS-INV-${Date.now().toString(36).toUpperCase()}`;
+        ? (editingOrderNumber || editOrder?.orderNumber || nextInvoiceNumber)
+        : nextInvoiceNumber;
       const targetOrderId = isEditing ? (editingOrderId || editOrder?.id || editOrder?.orderId || null) : null;
       const previousCreditAmount = isEditing && editOrder ? (() => {
         const oldMethod = String(editOrder.paymentMethod || '').toUpperCase();
@@ -832,7 +981,7 @@ export const CreateManualOrderPage = () => {
         tax,
         totalAmount: totalBillAmount,
         total: totalBillAmount,
-        paymentMethod,
+        paymentMethod: billingPaymentMethod,
         paymentStatus: creditAmountDue === 0 ? 'paid' : (amountPaid === 0 ? 'unpaid' : 'partial'),
         status: 'Delivered',
         createdByStaffId: currentUser?.uid || 'staff-1',
@@ -930,7 +1079,7 @@ export const CreateManualOrderPage = () => {
             debit: creditDelta > 0 ? creditDelta : 0,
             credit: creditDelta < 0 ? Math.abs(creditDelta) : 0,
             referenceId: orderNo,
-            paymentMethod,
+            paymentMethod: billingPaymentMethod,
             reason: creditDelta > 0 ? `Manual order credit increase #${orderNo}` : `Manual order credit reduction #${orderNo}`,
             user: currentUser || { role: userRole }
           });
@@ -961,7 +1110,7 @@ export const CreateManualOrderPage = () => {
               debit: nextCreditAmount,
               credit: 0,
               referenceId: orderNo,
-              paymentMethod,
+              paymentMethod: billingPaymentMethod,
               reason: `Manual order credit moved to customer #${orderNo}`,
               user: currentUser || { role: userRole }
             });
@@ -993,7 +1142,7 @@ export const CreateManualOrderPage = () => {
             debit: creditAmountDue,
             credit: 0,
             referenceId: orderNo,
-            paymentMethod,
+            paymentMethod: billingPaymentMethod,
             reason: `POS Counter Credit Sale #${orderNo}`,
             user: currentUser || { role: userRole }
           });
@@ -1010,7 +1159,7 @@ export const CreateManualOrderPage = () => {
             // A negative advanceCredit consumes an existing advance balance.
             advanceCredit: advanceCredit - advanceAppliedAmount,
             referenceId: orderNo,
-            paymentMethod,
+            paymentMethod: billingPaymentMethod,
             reason: advanceAppliedAmount > 0
               ? `Manual order used advance amount against bill #${orderNo}`
               : advanceCredit > 0
@@ -1070,7 +1219,7 @@ export const CreateManualOrderPage = () => {
         targetId: orderNo,
         targetType: 'order',
         newState: posOrderDoc,
-        reason: isEditing ? `Updated counter manual billing #${orderNo} (${paymentMethod})` : `Completed counter manual billing #${orderNo} (${paymentMethod})`
+        reason: isEditing ? `Updated counter manual billing #${orderNo} (${billingPaymentMethod})` : `Completed counter manual billing #${orderNo} (${billingPaymentMethod})`
       });
 
       const updatedRecent = [posOrderDoc, ...recentBills]
@@ -1134,27 +1283,90 @@ export const CreateManualOrderPage = () => {
     }
   };
 
+  const handlePaymentModeKeyDown = (event) => {
+    const modes = ['CASH', 'UPI', 'CARD', 'CREDIT'];
+    const focusedIndex = paymentModeButtonRefs.current.findIndex((button) => button === document.activeElement);
+    if (event.key === 'Enter' && focusedIndex >= 0) {
+      event.preventDefault();
+      const method = modes[focusedIndex];
+      setPaymentMethod(method);
+      setShowUpiQr(false);
+      if (method === 'CREDIT') setPaidAmount('0');
+      handleCompleteBilling({
+        paymentMethodOverride: method,
+        paidAmountOverride: method === 'CREDIT' ? 0 : undefined
+      });
+      return;
+    }
+
+    const direction = { ArrowRight: 'right', ArrowLeft: 'left', ArrowDown: 'down', ArrowUp: 'up' }[event.key];
+    if (!direction) return;
+    event.preventDefault();
+
+    const currentIndex = focusedIndex >= 0 ? focusedIndex : Math.max(0, modes.indexOf(paymentMethod));
+    const row = Math.floor(currentIndex / 2);
+    const column = currentIndex % 2;
+    let nextIndex = currentIndex;
+    if (direction === 'right') nextIndex = row * 2 + ((column + 1) % 2);
+    if (direction === 'left') nextIndex = row * 2 + ((column + 1) % 2);
+    if (direction === 'down') nextIndex = ((row + 1) % 2) * 2 + column;
+    if (direction === 'up') nextIndex = ((row + 1) % 2) * 2 + column;
+    paymentModeButtonRefs.current[nextIndex]?.focus();
+  };
+
   return (
-    <div className="pb-12 space-y-4 font-sans text-slate-900">
+    <div
+      className="-mt-4 pb-2 space-y-4 font-sans text-slate-900 sm:-mt-6 lg:-mt-8 lg:flex lg:h-[calc(100dvh-5.5rem)] lg:flex-col lg:overflow-hidden manual-order-page"
+      data-font-size={manualOrderFontSize}
+    >
+      <style>{`
+        .manual-order-page[data-font-size="small"] .text-xs:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: .675rem !important; }
+        .manual-order-page[data-font-size="small"] .text-sm:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: .7875rem !important; }
+        .manual-order-page[data-font-size="small"] .text-base:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: .9rem !important; }
+        .manual-order-page[data-font-size="small"] .text-lg:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.0125rem !important; }
+        .manual-order-page[data-font-size="small"] .text-xl:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.125rem !important; }
+        .manual-order-page[data-font-size="small"] .text-\\[9px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 8.1px !important; }
+        .manual-order-page[data-font-size="small"] .text-\\[10px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 9px !important; }
+        .manual-order-page[data-font-size="small"] .text-\\[11px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 9.9px !important; }
+        .manual-order-page[data-font-size="large"] .text-xs:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: .825rem !important; }
+        .manual-order-page[data-font-size="large"] .text-sm:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: .9625rem !important; }
+        .manual-order-page[data-font-size="large"] .text-base:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.1rem !important; }
+        .manual-order-page[data-font-size="large"] .text-lg:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.2375rem !important; }
+        .manual-order-page[data-font-size="large"] .text-xl:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.375rem !important; }
+        .manual-order-page[data-font-size="large"] .text-\\[9px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 9.9px !important; }
+        .manual-order-page[data-font-size="large"] .text-\\[10px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 11px !important; }
+        .manual-order-page[data-font-size="large"] .text-\\[11px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 12.1px !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-xs:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.05rem !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-sm:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.2075rem !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-base:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.35rem !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-lg:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.51875rem !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-xl:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 1.6875rem !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-\\[9px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 12.15px !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-\\[10px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 13.5px !important; }
+        .manual-order-page[data-font-size="extra-large"] .text-\\[11px\\]:not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { font-size: 14.85px !important; }
+        .manual-order-page[data-font-size="extra-large"] :is(.text-xs, .text-sm, .text-base, .text-lg, .text-xl, .text-\\[9px\\], .text-\\[10px\\], .text-\\[11px\\]):not(button):not(button *):not(input):not(input *):not(select):not(select *):not(textarea):not(textarea *) { line-height: 1.25 !important; }
+        .manual-order-page[data-font-size="extra-large"] .manual-order-cart-table { min-width: 48rem; }
+        .manual-order-page[data-font-size="extra-large"] .billing-summary-panel { overflow-y: auto; }
+        .manual-order-page[data-font-size="extra-large"] .billing-summary-panel .flex.justify-between { flex-wrap: wrap; row-gap: .5rem; }
+      `}</style>
       {/* Top Header & Fast Action Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 text-white border shadow-xl bg-slate-900 rounded-2xl sm:p-5 border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center text-white border shadow-lg w-11 h-11 rounded-2xl bg-emerald-600 border-emerald-400/40">
-            <ShoppingCart className="w-6 h-6" />
+      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 text-white border shadow-xl bg-slate-900 rounded-b-xl border-slate-800 sm:p-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center justify-center w-10 h-10 text-white border shadow-lg rounded-2xl bg-emerald-600 border-emerald-400/40">
+            <ShoppingCart className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-black tracking-tight text-white">
-              <span>{isEditMode ? `Edit Manual Order #${editOrder.orderNumber}` : 'Create Manual Order / POS Billing'}</span>
-              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+          <div className="leading-none">
+            <h1 className="flex items-center gap-2 text-base font-black tracking-tight text-white">
+              <span>{isEditMode ? `Edit Manual Order #${editOrder.orderNumber}` : 'Create Manual Order '}</span>
+              <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/60">
                 Counter POS Mode
               </span>
             </h1>
-            <p className="text-xs text-slate-300">Fast checkout, customer ledger, barcode scanning & instant receipts</p>
           </div>
         </div>
 
         {/* Quick Keyboard Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             onClick={() => setIsMobileScannerModalOpen(true)}
             className={`px-3 py-1.5 text-xs font-bold rounded-xl border flex items-center gap-1.5 transition-all shadow-xs ${
@@ -1209,8 +1421,8 @@ export const CreateManualOrderPage = () => {
 
       {/* Scanner Mode Input Dialog Overlay */}
       {scannerMode && (
-        <form onSubmit={handleScanSubmit} className="flex items-center justify-between gap-4 p-4 border shadow-lg bg-amber-500 text-slate-950 rounded-2xl border-amber-600 animate-in fade-in">
-          <div className="flex items-center gap-2">
+        <form onSubmit={handleScanSubmit} className="flex flex-col items-stretch justify-between gap-3 p-4 border shadow-lg bg-amber-500 text-slate-950 rounded-2xl border-amber-600 animate-in fade-in sm:flex-row sm:items-center">
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
             <BarcodeIcon className="w-6 h-6 animate-bounce text-slate-950" />
             <div>
               <span className="block text-xs font-extrabold tracking-wider uppercase">
@@ -1229,7 +1441,7 @@ export const CreateManualOrderPage = () => {
               onChange={(e) => setScanInput(e.target.value)}
               placeholder="Waiting for barcode scanner..."
               autoFocus
-              className="px-3 py-1.5 bg-white text-slate-900 font-mono font-bold text-xs rounded-xl border border-slate-900 focus:outline-none w-64 shadow-inner"
+              className="w-full px-3 py-1.5 bg-white text-slate-900 font-mono font-bold text-xs rounded-xl border border-slate-900 focus:outline-none sm:w-64 shadow-inner"
             />
             <button type="submit" className="px-3 py-1.5 bg-slate-950 text-white font-bold text-xs rounded-xl">
               Process
@@ -1242,9 +1454,9 @@ export const CreateManualOrderPage = () => {
       )}
 
       {/* Main Billing Grid Workspace */}
-      <div className="grid items-start grid-cols-1 gap-5 lg:grid-cols-12">
-        {/* LEFT COLUMN: Customer Selection & Product Search & Cart (Col-8) */}
-        <div className="space-y-4 lg:col-span-8">
+      <div className="grid min-h-0 grid-cols-1 items-stretch gap-3 lg:flex-1 lg:grid-cols-[minmax(0,1.8fr)_minmax(300px,0.9fr)] xl:gap-4">
+        {/* LEFT COLUMN: Customer Selection & Product Search & Cart */}
+        <div className="space-y-3 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden">
           {/* Customer Selection Card */}
           <div className="relative p-4 bg-white border shadow-xs rounded-2xl border-slate-200">
             {selectedCustomer ? (
@@ -1276,7 +1488,7 @@ export const CreateManualOrderPage = () => {
                 </div>
 
                 {/* Outstanding Balance Badge & Customer Actions */}
-                <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-3">
                   <div className="text-right">
                   <span className="text-[10px] uppercase font-bold text-slate-400 block">{balanceDisplayLabel}</span>
                   <span className={`text-base font-black font-mono ${customerOutstanding > 0 ? 'text-amber-600' : customerAdvance > 0 ? 'text-blue-600' : 'text-emerald-600'}`}>
@@ -1291,18 +1503,12 @@ export const CreateManualOrderPage = () => {
                     >
                       Ledger
                     </button>
-                    <button
-                      onClick={() => setIsBarcodeCardModalOpen(true)}
-                      className="btn-secondary text-xs py-1.5 px-2"
-                      title="View Barcode Card"
-                    >
-                      <BarcodeIcon className="w-4 h-4 text-slate-600" />
-                    </button>
+                    
                     <button
                       onClick={() => setSelectedCustomer(null)}
                       className="px-2 py-1 text-xs font-bold text-rose-600 hover:text-rose-800"
                     >
-                      <X className="w-4 h-4" />
+                      Change Customer
                     </button>
                   </div>
                 </div>
@@ -1322,28 +1528,47 @@ export const CreateManualOrderPage = () => {
                   </button>
                 </div>
 
+                
                 <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-                  <input
-                    ref={customerSearchRef}
-                    type="text"
-                    value={customerSearchQuery}
-                    onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                    placeholder="Search by Customer ID (e.g. CUS-000001), Name or Mobile Number..."
-              className="w-[85%] text-xs font-semibold bg-slate-50 border border-slate-300 rounded-xl pl-10 pr-36 py-2.5 text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                  />
-            <button
-              type="button"
-              onClick={() => { setScannerMode('CUSTOMER'); setScanInput(''); }}
-              className={`absolute right-1 top-1 flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-all ${
-                scannerMode === 'CUSTOMER'
-                  ? 'bg-amber-600 text-white border-amber-500 animate-pulse'
-                  : 'bg-white text-slate-700 border-slate-300 hover:bg-amber-50'
-              }`}
-            >
-              <BarcodeIcon className="w-3.5 h-3.5 text-amber-500" />
-              <span>Scan Customer</span>
-            </button>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <div className="relative flex-1 min-w-0">
+                      <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input
+                        ref={customerSearchRef}
+                        type="text"
+                        value={customerSearchQuery}
+                        onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' && filteredCustomers.length === 1) {
+                            event.preventDefault();
+                            handleSelectCustomer(filteredCustomers[0]);
+                          }
+                        }}
+                        placeholder="Search customer ID, name or mobile..."
+                        className="w-full rounded-xl border border-slate-300 bg-slate-50 py-2.5 pl-10 pr-3 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerMode('CUSTOMER');
+                        setScanInput('');
+                      }}
+                      className={`flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-bold transition-colors sm:w-auto ${
+                        scannerMode === 'CUSTOMER'
+                          ? 'border-amber-500 bg-amber-500 text-white'
+                          : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                      }`}
+                    >
+                      <BarcodeIcon className="w-4 h-4 shrink-0" />
+                      <span>Scan Customer</span>
+                    </button>
+                  </div>
+
+                  {/* Keep your existing Customer Dropdown here */}
+                </div>
+
 
                   {/* Customer Dropdown */}
                   {showCustomerDropdown && (
@@ -1381,49 +1606,51 @@ export const CreateManualOrderPage = () => {
                       )}
                     </div>
                   )}
-                </div>
-              </div>
+                </div> 
             )}
           </div>
 
           {/* Product Search & Aisle Location Bar */}
-          <div className="relative p-4 space-y-3 bg-white border shadow-xs rounded-2xl border-slate-200">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                <Search className="w-4 h-4 text-emerald-600" />
-                <span>Search Products & Barcodes (Press F2)</span>
-              </label>
-              <span className="text-[11px] font-semibold text-slate-400 font-mono">
-                Total Products: {products.length}
-              </span>
-            </div>
-
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+          <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 ref={productSearchRef}
                 type="text"
                 value={productSearchQuery}
                 onChange={(e) => setProductSearchQuery(e.target.value)}
-                placeholder="Search product name, Tamil name, barcode, SKU, brand..."
-              className="w-[85%] text-xs font-semibold bg-slate-50 border border-slate-300 rounded-xl pl-10 pr-32 py-2.5 text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                onFocus={() => {
+                  if (productSearchQuery.trim()) setShowProductDropdown(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && filteredProducts[0] && filteredProducts[0].stock > 0) {
+                    e.preventDefault();
+                    handleAddToCart(filteredProducts[0]);
+                  }
+                }}
+                placeholder="Search product, barcode, SKU, brand..."
+                className="w-full rounded-xl border border-slate-300 bg-slate-50 py-2.5 pl-10 pr-3 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
+            </div>
+
             <button
               type="button"
-              onClick={() => { setScannerMode('PRODUCT'); setScanInput(''); }}
-              className={`absolute right-1 top-1 flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-all ${
+              onClick={() => {
+                setScannerMode('PRODUCT');
+                setScanInput('');
+              }}
+              className={`flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-bold transition-colors sm:w-auto ${
                 scannerMode === 'PRODUCT'
-                  ? 'bg-emerald-600 text-white border-emerald-500 animate-pulse'
-                  : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50'
+                  ? 'border-emerald-600 bg-emerald-600 text-white'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
               }`}
             >
-              <BarcodeIcon className="w-3.5 h-3.5 text-emerald-500" />
+              <BarcodeIcon className="w-4 h-4 shrink-0" />
               <span>Scan Product</span>
             </button>
-
               {/* Product Search Dropdown */}
               {showProductDropdown && (
-                <div className="absolute left-0 right-0 z-30 mt-1 overflow-y-auto bg-white border divide-y shadow-2xl top-full border-slate-200 rounded-2xl max-h-80 divide-slate-100">
+                <div className="absolute left-0 right-0 z-50 mt-1 overflow-y-auto bg-white border divide-y shadow-2xl top-full border-slate-200 rounded-2xl max-h-80 divide-slate-100">
                   {filteredProducts.length === 0 ? (
                     <div className="p-4 text-xs font-semibold text-center text-slate-500">
                       No matching products found.
@@ -1433,14 +1660,15 @@ export const CreateManualOrderPage = () => {
                       const isOutOfStock = p.stock <= 0;
                       return (
                         <div
-                          key={idx}
+                          key={`${p.productId}-${p.variantId}-${idx}`}
+                          role="option"
                           onClick={() => !isOutOfStock && handleAddToCart(p)}
-                          className={`p-3.5 flex items-center justify-between transition-colors ${
+                          className={`p-3.5 flex flex-col gap-3 transition-colors sm:flex-row sm:items-center sm:justify-between ${
                             isOutOfStock ? 'bg-slate-50 opacity-60 cursor-not-allowed' : 'hover:bg-emerald-50/50 cursor-pointer'
                           }`}
                         >
                           <div className="space-y-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="text-xs font-extrabold text-slate-900">{p.productName}</span>
                               <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                                 {p.variantName}
@@ -1464,7 +1692,7 @@ export const CreateManualOrderPage = () => {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-4 text-right">
+                          <div className="flex items-center justify-between gap-4 text-right sm:justify-end">
                             <div>
                               <div className="font-mono text-xs font-black text-slate-900">{formatCurrency(p.sellingPrice)}</div>
                               {p.mrp > p.sellingPrice && (
@@ -1493,10 +1721,9 @@ export const CreateManualOrderPage = () => {
                 </div>
               )}
             </div>
-          </div>
 
           {/* Central Cart Table */}
-          <div className="overflow-hidden bg-white border shadow-xs rounded-2xl border-slate-200">
+          <div className="overflow-hidden bg-white border shadow-xs rounded-2xl border-slate-200 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
             <div className="flex items-center justify-between p-4 border-b border-slate-200 bg-slate-50">
               <h2 className="flex items-center gap-2 text-xs font-extrabold tracking-wider uppercase text-slate-700">
                 <ShoppingCart className="w-4 h-4 text-emerald-600" />
@@ -1518,8 +1745,8 @@ export const CreateManualOrderPage = () => {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse">
+              <div className="overflow-auto lg:min-h-0 lg:flex-1">
+                <table className="w-full text-xs text-left border-collapse manual-order-cart-table">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-100/70 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
                       <th className="py-2.5 px-3">Product Item</th>
@@ -1564,10 +1791,33 @@ export const CreateManualOrderPage = () => {
                             <input
                               type="number"
                               value={item.quantity}
-                              onChange={(e) => handleUpdateQuantity(item.id, e.target.value)}
+                              //onChange={(event) => handleUpdateQuantity(item.id, event.target.value)}
+                              onChange={(event) => {
+                                  const value = event.target.value;
+
+                                  // Allow empty input temporarily
+                                  if (value === '') {
+                                    handleUpdateQuantity(item.id, '');
+                                    return;
+                                  }
+                                  // Allow only positive whole numbers
+                                  if (!/^\d+$/.test(value)) return;
+
+                                  const qty = Number(value);
+
+                                  // Validate minimum and available stock
+                                  //if (qty < 1 || qty > item.availableStock) return;
+                                  if (qty < 1) return;
+
+                                  handleUpdateQuantity(item.id, qty);
+                                }}
+                              onBlur={(event) => {
+                                if (event.target.value === '') handleUpdateQuantity(item.id, 1);
+                              }}
+                              onClick={(event) => event.currentTarget.select()}
                               min="1"
                               max={item.availableStock}
-                              className="w-10 text-center text-xs font-mono font-bold bg-white rounded-md py-0.5 border border-slate-300 focus:outline-none"
+                              className="w-10 text-center text-xs font-mono font-bold bg-white rounded-md py-0.5 border border-slate-300 focus:outline-none appearance-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                             />
                             <button
                               onClick={() => handleUpdateQuantity(item.id, item.quantity + 1)}
@@ -1603,16 +1853,26 @@ export const CreateManualOrderPage = () => {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Billing Summary & Payment Panel (Col-4) */}
-        <div className="space-y-4 lg:col-span-4">
-          <div className="p-5 space-y-5 bg-white border shadow-lg rounded-2xl border-slate-200">
-            <h2 className="flex items-center gap-2 pb-3 text-sm font-extrabold tracking-wider uppercase border-b text-slate-900 border-slate-100">
-              <DollarSign className="w-4 h-4 text-emerald-600" />
-              <span>Billing Summary</span>
+        {/* RIGHT COLUMN: Billing Summary & Payment Panel */}
+        <div className="lg:h-full lg:overflow-hidden">
+          <div className="flex flex-col h-full p-4 space-y-3 bg-white border shadow-lg rounded-2xl border-slate-200 lg:space-y-2 billing-summary-panel">
+            <h2 className="flex items-center justify-between gap-2 pb-3 text-sm font-extrabold tracking-wider uppercase border-b text-slate-900 border-slate-100">
+              <span className="flex items-center gap-2">
+                <IndianRupee className="w-4 h-4 text-emerald-600" />
+                <span>Billing Summary</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsRecentBillsModalOpen(true)}
+                className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-extrabold tracking-normal text-blue-700 normal-case bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100"
+              >
+                <History className="w-3.5 h-3.5" />
+                Recent Orders
+              </button>
             </h2>
 
             {/* Calculations Breakdown */}
-            <div className="space-y-2.5 text-lg font-semibold text-slate-600 border-b border-slate-100 pb-4">
+            <div className="space-y-1.5 text-lg font-semibold text-slate-600 border-b border-slate-100 ">
               <div className="flex justify-between">
                 <span className="text-sm">Items Subtotal</span>
                 <span className="font-mono font-bold text-slate-900">{formatCurrency(subtotal)}</span>
@@ -1639,7 +1899,7 @@ export const CreateManualOrderPage = () => {
             </div>
 
             {/* Customer Balance and Payment Amount */}
-            <div className="p-4 space-y-3 text-sm border bg-amber-50/70 border-amber-200 rounded-xl">
+            <div className="p-3 space-y-2.5 text-sm border bg-amber-50/70 border-amber-200 rounded-xl">
               <div className="flex items-center justify-between font-bold text-amber-900">
                 <span className="text-sm">{customerOutstanding > 0 ? 'Previous Balance:' : customerAdvance > 0 ? 'Advance Amount:' : 'Previous Balance:'}</span>
                 <span className="font-mono text-lg">{formatCurrency(customerOutstanding > 0 ? customerOutstanding : customerAdvance > 0 ? customerAdvance : customerOutstanding)}</span>
@@ -1653,8 +1913,25 @@ export const CreateManualOrderPage = () => {
                 <input
                   type="number"
                   value={paidAmount}
-                  onChange={(event) => setPaidAmount(event.target.value)}
+                  //onChange={(event) => setPaidAmount(event.target.value)}
+                  onChange={(event) => { const value = event.target.value;
+                    if (value === '') {
+                    setPaidAmount('');
+                    return;
+                  }
+                    if (!/^\d+$/.test(value)) {
+                    return;
+                  }
+                  setPaidAmount(value);
+                  }}
                   onClick={(event) => event.currentTarget.select()}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      const selectedIndex = ['CASH', 'UPI', 'CARD', 'CREDIT'].indexOf(paymentMethod);
+                      paymentModeButtonRefs.current[Math.max(0, selectedIndex)]?.focus();
+                    }
+                  }}
                   min="0"
                   step="0.01"
                   inputMode="decimal"
@@ -1679,7 +1956,7 @@ export const CreateManualOrderPage = () => {
                 Select Payment Mode
               </label>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-wrap gap-2" onKeyDown={handlePaymentModeKeyDown}>
                 {[
                   { id: 'CASH', label: 'Cash' },
                   { id: 'UPI', label: 'UPI QR' },
@@ -1688,9 +1965,10 @@ export const CreateManualOrderPage = () => {
                 ].map((mode) => (
                   <button
                     key={mode.id}
+                    ref={(element) => { paymentModeButtonRefs.current[['CASH', 'UPI', 'CARD', 'CREDIT'].indexOf(mode.id)] = element; }}
                     type="button"
                     onClick={() => handlePaymentMethodChange(mode.id)}
-                    className={`p-2.5 text-xs font-bold rounded-xl border transition-all ${
+                    className={`min-w-0 flex-1 px-2 py-1.5 text-xs font-bold rounded-xl border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
                       paymentMethod === mode.id
                         ? 'bg-emerald-800 text-white border-emerald-800 shadow-md scale-102'
                         : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
@@ -1713,41 +1991,6 @@ export const CreateManualOrderPage = () => {
             </button>
           </div>
 
-          {/* Recent Bills Drawer */}
-          {recentBills.length > 0 && (
-            <div className="p-4 space-y-3 bg-white border shadow-xs rounded-2xl border-slate-200">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                <History className="w-4 h-4 text-blue-600" />
-                <span>Recent Manual Invoices</span>
-              </h3>
-
-              <div className="space-y-2">
-                {recentBills.slice(0, 5).map((bill, idx) => (
-                  <div
-                    key={idx}
-                    className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs"
-                  >
-                    <div>
-                      <div className="font-mono font-bold text-slate-900">#{bill.orderNumber}</div>
-                      <div className="text-[10px] text-slate-500 font-semibold">{bill.customerName}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono font-black text-emerald-700">{formatCurrency(bill.totalAmount)}</div>
-                      <button
-                        onClick={() => {
-                          setCompletedOrder(bill);
-                          setIsReceiptModalOpen(true);
-                        }}
-                        className="text-[10px] font-bold text-blue-600 hover:underline"
-                      >
-                        Reprint Receipt
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -1810,6 +2053,68 @@ export const CreateManualOrderPage = () => {
         </div>
       )}
 
+      {isRecentBillsModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm"
+          onClick={() => setIsRecentBillsModalOpen(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recent-orders-title"
+            className="w-full max-w-lg overflow-hidden bg-white border shadow-2xl rounded-2xl border-slate-200"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 text-white bg-slate-900">
+              <div className="flex items-center gap-2">
+                <History className="w-5 h-5 text-blue-300" />
+                <h2 id="recent-orders-title" className="text-sm font-extrabold">Recent Orders</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRecentBillsModalOpen(false)}
+                className="p-1.5 text-slate-300 rounded-lg hover:bg-slate-800 hover:text-white"
+                aria-label="Close recent orders"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[65vh] p-4 space-y-2 overflow-y-auto">
+              {recentBills.length === 0 ? (
+                <p className="py-8 text-xs font-semibold text-center text-slate-500">No recent orders found.</p>
+              ) : (
+                recentBills.slice(0, 10).map((bill, idx) => (
+                  <div
+                    key={bill.orderNumber || bill.id || `recent-order-${idx}`}
+                    className="flex items-center justify-between gap-3 p-3 text-xs border rounded-xl bg-slate-50 border-slate-200"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono font-bold text-slate-900">#{bill.orderNumber || bill.id}</div>
+                      <div className="mt-0.5 text-[10px] font-semibold text-slate-500 truncate">{bill.customerName || 'Walk-in Customer'}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="font-mono font-black text-emerald-700">{formatCurrency(bill.totalAmount)}</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsRecentBillsModalOpen(false);
+                          setCompletedOrder(bill);
+                          setIsReceiptModalOpen(true);
+                        }}
+                        className="px-2.5 py-1.5 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100"
+                      >
+                        Reprint
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
       <NewCustomerModal
         isOpen={isNewCustomerModalOpen}
         onClose={() => setIsNewCustomerModalOpen(false)}
@@ -1854,7 +2159,12 @@ export const CreateManualOrderPage = () => {
         isOpen={isMobileScannerModalOpen}
         onClose={() => setIsMobileScannerModalOpen(false)}
         activeSession={activeScannerSession}
-        onSessionCreated={(sess) => setActiveScannerSession(sess)}
+        onSessionCreated={(sess) => {
+          setActiveScannerSession(sess);
+          if (currentUser?.uid) {
+            localStorage.setItem(getActiveScannerSessionKey(currentUser.uid), sess.sessionId);
+          }
+        }}
         scanCount={mobileScanCount}
       />
     </div>

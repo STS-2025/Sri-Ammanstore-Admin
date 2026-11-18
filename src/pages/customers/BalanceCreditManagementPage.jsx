@@ -7,11 +7,20 @@ import { getAllCustomers } from '../../firebase/customerService';
 import { formatCurrency } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 
+const getCustomerArea = (customer = {}) => {
+  const address = customer.addresses?.[0] || customer.address || customer.deliveryAddress || {};
+  return String(
+    address.locality || address.area || address.city || address.district ||
+    customer.locality || customer.area || customer.city || ''
+  ).trim();
+};
+
 export const BalanceCreditManagementPage = () => {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [customerFilter, setCustomerFilter] = useState('ALL');
+  const [areaFilter, setAreaFilter] = useState('ALL');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const notify = useNotification();
 
@@ -39,14 +48,19 @@ export const BalanceCreditManagementPage = () => {
     (total, customer) => total + Math.max(0, Number(customer.advanceBalance || 0)),
     0
   );
+  const availableAreas = useMemo(() => [...new Set(customers
+    .map(getCustomerArea)
+    .filter(Boolean))].sort((first, second) => first.localeCompare(second)), [customers]);
 
   const filteredCustomers = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
     return customers.filter((customer) => {
       const balance = Number(customer.currentBalance ?? customer.outstandingBalance ?? 0);
       const advanceBalance = Number(customer.advanceBalance || 0);
+      const area = getCustomerArea(customer);
       if (customerFilter === 'OUTSTANDING' && balance <= 0) return false;
       if (customerFilter === 'ADVANCED' && advanceBalance <= 0) return false;
+      if (areaFilter !== 'ALL' && area !== areaFilter) return false;
       if (!query) return true;
       return [
         customer.name,
@@ -54,11 +68,11 @@ export const BalanceCreditManagementPage = () => {
         customer.id,
         customer.mobile,
         customer.phone,
-        customer.address?.area,
-        customer.area
+        area,
+        customer.locality
       ].some((value) => String(value || '').toLowerCase().includes(query));
     });
-  }, [customers, customerFilter, searchTerm]);
+  }, [customers, customerFilter, areaFilter, searchTerm]);
 
   const handleBalanceUpdated = (updatedCustomer) => {
     setCustomers((currentCustomers) =>
@@ -85,10 +99,10 @@ export const BalanceCreditManagementPage = () => {
           </div>
           <div
             className="mt-0.5 inline-flex max-w-40 items-center gap-1 truncate text-[10px] text-slate-500"
-            title={customer.address?.area || customer.area || 'Area Not Set'}
+            title={getCustomerArea(customer) || 'Area Not Set'}
           >
             <MapPin className="h-3 w-3 shrink-0 text-slate-400" />
-            <span className="truncate">{customer.address?.area || customer.area || 'Area Not Set'}</span>
+            <span className="truncate">{getCustomerArea(customer) || 'Area Not Set'}</span>
           </div>
         </button>
       )
@@ -197,16 +211,27 @@ export const BalanceCreditManagementPage = () => {
             <h2 className="text-sm font-bold text-slate-900">Customer Credit Accounts</h2>
             <p className="mt-1 text-[11px] text-slate-500">Open a customer ledger to review transactions or record a payment.</p>
           </div>
-          <select
-            value={customerFilter}
-            onChange={(event) => setCustomerFilter(event.target.value)}
-            className="px-3 py-2 text-xs font-semibold bg-white border rounded-xl border-slate-300 text-slate-700 focus:ring-2 focus:ring-emerald-500"
-            aria-label="Filter customers by balance"
-          >
-            <option value="ALL">All Customer</option>
-            <option value="OUTSTANDING">Outstanding Only</option>
-            <option value="ADVANCED">Advanced Only</option>
-          </select>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <select
+              value={areaFilter}
+              onChange={(event) => setAreaFilter(event.target.value)}
+              className="px-3 py-2 text-xs font-semibold bg-white border rounded-xl border-slate-300 text-slate-700 focus:ring-2 focus:ring-emerald-500"
+              aria-label="Filter customers by area"
+            >
+              <option value="ALL">All Areas</option>
+              {availableAreas.map((area) => <option key={area} value={area}>{area}</option>)}
+            </select>
+            <select
+              value={customerFilter}
+              onChange={(event) => setCustomerFilter(event.target.value)}
+              className="px-3 py-2 text-xs font-semibold bg-white border rounded-xl border-slate-300 text-slate-700 focus:ring-2 focus:ring-emerald-500"
+              aria-label="Filter customers by balance"
+            >
+              <option value="ALL">All Customer</option>
+              <option value="OUTSTANDING">Outstanding Only</option>
+              <option value="ADVANCED">Advanced Only</option>
+            </select>
+          </div>
         </div>
 
         <div className="relative w-full max-w-md">

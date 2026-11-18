@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Barcode as BarcodeIcon, ShieldCheck, Save, CheckCircle2, RefreshCw } from 'lucide-react';
-import { getCustomerSettings, saveCustomerSettings } from '../../firebase/customerService';
+import { getCustomerSettingsAsync, saveCustomerSettings } from '../../firebase/customerService';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -15,6 +15,8 @@ export const PosSettingsSection = () => {
     numberLength: 6,
     barcodeFormat: 'CODE128',
     posInvoicePrefix: 'POS-INV-',
+    manualOrderStartingNumber: 1,
+    posInvoiceNumberLength: 6,
     allowWalkInCustomer: true,
     allowCreditSales: true,
     requireCustomerForCredit: true,
@@ -22,16 +24,25 @@ export const PosSettingsSection = () => {
   });
 
   const [previewId, setPreviewId] = useState('');
+  const [previewInvoice, setPreviewInvoice] = useState('');
 
   useEffect(() => {
-    const loaded = getCustomerSettings();
-    setSettings((prev) => ({ ...prev, ...loaded }));
+    let cancelled = false;
+    getCustomerSettingsAsync().then((loaded) => {
+      if (!cancelled) setSettings((prev) => ({ ...prev, ...loaded }));
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     const padded = String(settings.startingNumber).padStart(Number(settings.numberLength), '0');
     setPreviewId(`${settings.prefix}${settings.separator}${padded}`);
   }, [settings.prefix, settings.separator, settings.startingNumber, settings.numberLength]);
+
+  useEffect(() => {
+    const padded = String(settings.manualOrderStartingNumber).padStart(Number(settings.posInvoiceNumberLength), '0');
+    setPreviewInvoice(`${settings.posInvoicePrefix}${padded}`);
+  }, [settings.posInvoicePrefix, settings.manualOrderStartingNumber, settings.posInvoiceNumberLength]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -149,6 +160,36 @@ export const PosSettingsSection = () => {
           </div>
 
           <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">Manual Order Starting Number</label>
+            <input
+              type="number"
+              name="manualOrderStartingNumber"
+              value={settings.manualOrderStartingNumber}
+              onChange={handleChange}
+              min="1"
+              step="1"
+              required
+              className="w-full text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900"
+            />
+            <p className="mt-1 text-[10px] text-slate-500">New IDs use the prefix followed by the next available number.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">Number Length (Digits)</label>
+            <input
+              type="number"
+              name="posInvoiceNumberLength"
+              value={settings.posInvoiceNumberLength}
+              onChange={handleChange}
+              min="1"
+              max="12"
+              step="1"
+              required
+              className="w-full text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900"
+            />
+          </div>
+
+          <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">Default Customer Credit Limit (₹)</label>
             <input
               type="number"
@@ -159,6 +200,11 @@ export const PosSettingsSection = () => {
               className="w-full text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900"
             />
           </div>
+        </div>
+
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">POS Invoice Preview</span>
+          <span className="font-mono text-sm font-black text-emerald-800">{previewInvoice}</span>
         </div>
 
         <div className="space-y-3 pt-2">

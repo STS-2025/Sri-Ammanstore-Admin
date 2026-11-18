@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +28,40 @@ class FirebaseService {
   ScannerSession? get currentSession => _currentSession;
   bool get isConnected =>
       _currentSession != null && _currentSession!.isConnected;
+
+  String? _formatDeviceModel(String manufacturer, String model) {
+    final cleanManufacturer = manufacturer.trim();
+    final cleanModel = model.trim();
+    if (cleanModel.isEmpty) {
+      return cleanManufacturer.isEmpty ? null : cleanManufacturer;
+    }
+    if (cleanManufacturer.isEmpty ||
+        cleanModel.toLowerCase().contains(cleanManufacturer.toLowerCase())) {
+      return cleanModel;
+    }
+    return '$cleanManufacturer $cleanModel';
+  }
+
+  Future<String?> _getConnectedDeviceModel() async {
+    if (kIsWeb) {
+      return null;
+    }
+
+    try {
+      final deviceInfo = DeviceInfoPlugin();
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final device = await deviceInfo.androidInfo;
+        return _formatDeviceModel(device.manufacturer, device.model);
+      }
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        final device = await deviceInfo.iosInfo;
+        return _formatDeviceModel('Apple', device.modelName);
+      }
+    } catch (error) {
+      debugPrint('Could not read scanner device model: $error');
+    }
+    return null;
+  }
 
   final StreamController<ScannerSession?> _sessionStreamController =
       StreamController<ScannerSession?>.broadcast();
@@ -196,11 +231,13 @@ class FirebaseService {
       throw StateError('Another scanner is already connected to this session.');
     }
 
+    final connectedDeviceModel = await _getConnectedDeviceModel();
     await sessionRef.update({
       'status': 'CONNECTED',
       'verifiedToken': token,
       'connectedDeviceId': _scannerDeviceId,
       'connectedDeviceName': 'Sri Amman Store Scanner',
+      'connectedDeviceModel': connectedDeviceModel,
       'connectedAt': FieldValue.serverTimestamp(),
       'lastActivityAt': FieldValue.serverTimestamp(),
     });

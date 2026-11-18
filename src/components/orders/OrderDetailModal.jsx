@@ -42,6 +42,17 @@ export const OrderDetailModal = ({
 
   if (!isOpen || !order) return null;
 
+  const orderTotal = Number(order.totalAmount ?? order.total ?? 0);
+  const paymentStatus = String(order.paymentStatus || '').toLowerCase();
+  const paidAmount = Number(order.amountPaid ?? (
+    paymentStatus === 'paid'
+      ? orderTotal
+      : paymentStatus === 'partial'
+        ? Math.max(0, orderTotal - Number(order.balanceDue ?? 0))
+        : 0
+  ));
+  const balanceAmount = Number(order.balanceDue ?? Math.max(0, orderTotal - paidAmount));
+
   const handleAdvanceStatus = async (nextStatus) => {
     setIsUpdating(true);
     try {
@@ -202,8 +213,20 @@ export const OrderDetailModal = ({
                 )}
                 <div className="flex justify-between font-bold text-slate-900 pt-2 border-t text-sm font-sans">
                   <span>Grand Total:</span>
-                  <span className="text-emerald-800">{formatCurrency(order.totalAmount)}</span>
+                  <span className="text-emerald-800">{formatCurrency(orderTotal)}</span>
                 </div>
+                {isManualOrder && (
+                  <>
+                    <div className="flex justify-between text-slate-600 pt-1">
+                      <span>Paid Amount:</span>
+                      <span>{formatCurrency(paidAmount)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-amber-700">
+                      <span>Balance Amount:</span>
+                      <span>{formatCurrency(balanceAmount)}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="p-2.5 bg-slate-50 rounded-lg text-[11px] flex items-center justify-between">

@@ -1,19 +1,88 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Printer, CheckCircle2, Store, FileText, Download } from 'lucide-react';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
+import { useAuth } from '../../hooks/useAuth';
+import { ROLE_DEFINITIONS } from '../../utils/roles';
 
-export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActionLabel = '+ Start Next Billing', autoPrint = false }) => {
+export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActionLabel = '+ Start Next Billing' }) => {
+  const { userRole } = useAuth();
+  const [showPrintPrompt, setShowPrintPrompt] = useState(false);
+  const [printChoice, setPrintChoice] = useState('no');
+  const printYesButtonRef = useRef(null);
+  const printNoButtonRef = useRef(null);
+
   useEffect(() => {
-    if (!isOpen || !order || !autoPrint) return undefined;
-    const printTimer = window.setTimeout(() => window.print(), 250);
-    return () => window.clearTimeout(printTimer);
-  }, [isOpen, order, autoPrint]);
-
-  if (!isOpen || !order) return null;
+    if (isOpen && order) {
+      setShowPrintPrompt(true);
+      setPrintChoice('no');
+    }
+  }, [isOpen, order]);
 
   const handlePrint = () => {
+    setShowPrintPrompt(false);
     window.print();
   };
+
+  const handleSkipPrint = () => {
+    setShowPrintPrompt(false);
+    onClose();
+    onNewBilling?.();
+  };
+
+  useEffect(() => {
+    if (!showPrintPrompt) return undefined;
+
+    const focusDefaultChoice = window.requestAnimationFrame(() => {
+      printNoButtonRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(focusDefaultChoice);
+  }, [showPrintPrompt]);
+
+  useEffect(() => {
+    if (!showPrintPrompt) return undefined;
+
+    /*const handlePrintPromptKeyDown = (event) => {
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        const nextChoice = event.key === 'ArrowLeft' ? 'no' : 'yes';
+        setPrintChoice(nextChoice);
+        if (nextChoice === 'yes') printYesButtonRef.current?.focus();
+        else printNoButtonRef.current?.focus();
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        if (printChoice === 'yes') handlePrint();
+        else handleSkipPrint();
+      }
+    };*/
+    
+    const handlePrintPromptKeyDown = (event) => {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        setPrintChoice('yes');
+        printYesButtonRef.current?.focus();
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        setPrintChoice('no');
+        printNoButtonRef.current?.focus();
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+
+        if (printChoice === 'yes') {
+          handlePrint();
+        } else {
+          handleSkipPrint();
+        }
+      }
+    };
+
+
+    window.addEventListener('keydown', handlePrintPromptKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handlePrintPromptKeyDown);
+    };
+  }, [showPrintPrompt, printChoice]);
+
+  if (!isOpen || !order) return null;
 
   const customerName = order.customerName || order.userProfile?.name || 'Walk-in Customer';
   const customerId = order.customerId || order.customer?.customerId || '';
@@ -25,13 +94,81 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
   const tax = Number(order.tax || 0);
   const totalAmount = Number(order.totalAmount || order.total || 0);
   const amountPaid = Number(order.amountPaid ?? totalAmount);
-  const balanceDue = Number(order.balanceDue ?? 0);
+  const balanceDue = isManualOrder
+    ? Math.max(0, Math.round((totalAmount - amountPaid) * 100) / 100)
+    : Math.max(0, Number(order.balanceDue ?? 0));
+  const cashierRole = userRole || order.createdByStaffRole || order.createdByRole || order.staffRole || order.userRole || 'Cashier';
+  const cashierRoleName = ROLE_DEFINITIONS[cashierRole]?.name || String(cashierRole).replace(/[_-]+/g, ' ');
 
   return (
-    <div className="pos-receipt-print-root fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-      <div className="pos-receipt-print-shell w-full max-w-lg max-h-[92vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pos-receipt-print-root bg-slate-900/60 backdrop-blur-sm animate-in fade-in print:static print:block print:p-0 print:m-0 print:bg-white print:overflow-visible">
+        <style>{`
+          @page {
+            size: 80mm 280mm;
+            margin: 0;
+          }
+
+          @media print {
+            html,
+            body,
+            #root {
+              width: 80mm !important;
+              min-width: 80mm !important;
+              height: auto !important;
+              min-height: 0 !important;
+              display: block !important;
+              position: static !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              overflow: visible !important;
+            }
+
+            #root {
+              align-items: flex-start !important;
+              justify-content: flex-start !important;
+            }
+
+            .pos-receipt-print-root {
+              position: fixed !important;
+              top: 0 !important;
+              left: 0 !important;
+              right: auto !important;
+              bottom: auto !important;
+              transform: none !important;
+              display: block !important;
+              width: 80mm !important;
+              max-width: 80mm !important;
+              min-height: 0 !important;
+              height: auto !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              overflow: visible !important;
+            }
+
+            .pos-receipt-print-shell,
+            .pos-receipt-print-body {
+              width: 80mm !important;
+              max-width: 80mm !important;
+              min-height: 0 !important;
+              height: auto !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              overflow: visible !important;
+              display: block !important;
+            }
+
+            .pos-receipt-print-content {
+              width: 80mm !important;
+              max-width: 80mm !important;
+              margin: 0 !important;
+              padding:0 !important;
+              box-sizing: border-box !important;
+            }
+          }
+        `}</style>
+        <div className="pos-receipt-print-shell w-full max-w-lg max-h-[92vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden print:block print:max-w-none print:max-h-none print:rounded-none print:border-0 print:shadow-none print:overflow-visible">
         {/* Header Toolbar (Hidden on print) */}
-        <div className="print:hidden px-6 py-4 border-b border-slate-200 bg-slate-900 text-white flex items-center justify-between">
+        <div className="flex items-center justify-between px-6 py-4 text-white border-b print:hidden border-slate-200 bg-slate-900">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-400" />
             <h2 className="text-base font-bold text-white">Billing Completed</h2>
@@ -54,7 +191,7 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
         </div>
 
         {/* Action Bar (Hidden on print) */}
-        <div className="print:hidden p-3 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between">
+        <div className="flex items-center justify-between p-3 border-b print:hidden bg-emerald-50 border-emerald-200">
           <span className="text-xs font-bold text-emerald-900">Invoice: #{order.orderNumber || order.id}</span>
           {onNewBilling && (
             <button
@@ -69,24 +206,59 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
           )}
         </div>
 
+          {showPrintPrompt && (
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b print:hidden bg-amber-50 border-amber-200">
+              <span className="text-xs font-bold text-amber-900">Do you want to print the receipt?</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  ref={printYesButtonRef}
+                  onFocus={() => setPrintChoice('yes')}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg ${
+                    printChoice === 'yes'
+                      ? 'bg-emerald-700 text-white ring-2 ring-emerald-300'
+                      : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                  }`}
+                >
+                  Yes, Print
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSkipPrint}
+                  ref={printNoButtonRef}
+                  autoFocus
+                  onFocus={() => setPrintChoice('no')}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${
+                    printChoice === 'no'
+                      ? 'bg-slate-700 text-white border-slate-700 ring-2 ring-slate-300'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  No, Skip
+                </button>
+              </div>
+            </div>
+          )}
+
         {/* Printable Thermal Receipt Canvas */}
-        <div className="pos-receipt-print-body flex-1 overflow-y-auto p-6 bg-slate-100 flex justify-center print:p-0 print:bg-white">
-          <div className="pos-receipt-print-content w-80 bg-white border border-slate-300 p-5 rounded-xl shadow-lg font-mono text-xs text-slate-900 space-y-4 print:shadow-none print:border-none print:w-full">
+          <div className="flex justify-center flex-1 p-6 overflow-y-auto pos-receipt-print-body bg-slate-100 print:block print:flex-none print:p-0 print:overflow-visible print:bg-white">
+            <div className="p-5 space-y-4 font-mono text-xs bg-white border shadow-lg pos-receipt-print-content w-80 border-slate-300 rounded-xl text-slate-900 print:w-full print:rounded-none print:shadow-none print:border-0 print:p-0">
             {/* Header */}
-            <div className="text-center space-y-1 border-b border-slate-300 pb-3">
-              <h1 className="text-sm font-black font-sans tracking-tight uppercase">SRI AMMAN STORE</h1>
+              <div className="pb-1 space-y-1 text-center border-b-2 border-black print:border-black">
+              <h1 className="font-sans text-sm font-black tracking-tight uppercase">SRI AMMAN STORE</h1>
               <p className="text-[10px] leading-tight text-slate-600">
                 142, Cross Cut Road, Gandhipuram<br />
                 Coimbatore - 641012 • Ph: +91 98401 22334<br />
                 {!isManualOrder && <strong>GSTIN: 33AAAAA0000A1Z5</strong>}
               </p>
-              <div className="pt-1 text-[10px] uppercase font-bold text-slate-500">
+              <div className="pt-1 text-[10px] uppercase font-bold text-slate-900">
                 COUNTER POS CASH MEMO
               </div>
             </div>
 
             {/* Bill Details */}
-            <div className="text-[11px] space-y-0.5 border-b border-slate-200 pb-2">
+              <div className="text-[11px] space-y-0.5 border-b-2 border-black pb-1 print:border-black">
               <div className="flex justify-between">
                 <span>Bill No:</span>
                 <strong className="font-bold">{order.orderNumber || order.id}</strong>
@@ -105,18 +277,18 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
                   <strong>{customerId}</strong>
                 </div>
               )}
-              {order.createdByStaffName && (
+                {(order.createdByStaffName || cashierRole) && (
                 <div className="flex justify-between">
                   <span>Cashier:</span>
-                  <span>{order.createdByStaffName}</span>
+                    <span>{cashierRoleName}</span>
                 </div>
               )}
             </div>
 
             {/* Items Table */}
-            <table className="w-full text-[11px] border-b border-slate-300 pb-2 text-left">
-              <thead>
-                <tr className="border-b border-slate-300 font-bold uppercase text-[9px]">
+              <table className="w-full text-[11px] border-b-2 border-black pb-2 text-left border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-black font-bold uppercase text-[9px] print:border-black">
                   <th className="py-1">Item</th>
                   <th className="py-1 text-center">Qty</th>
                   <th className="py-1 text-right">Price</th>
@@ -126,20 +298,20 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
               <tbody className="divide-y divide-slate-100">
                 {items.map((item, idx) => (
                   <tr key={idx}>
-                    <td className="py-1 pr-1 leading-tight font-sans">
+                    <td className="py-1 pr-1 font-sans leading-tight">
                       <div className="font-bold">{item.productName || item.name}</div>
                       {item.variantName && <div className="text-[9px] text-slate-500">{item.variantName}</div>}
                     </td>
-                    <td className="py-1 text-center align-top font-bold">{item.quantity || item.qty}</td>
+                    <td className="py-1 font-bold text-center align-top">{item.quantity || item.qty}</td>
                     <td className="py-1 text-right align-top">{formatCurrency(item.unitPrice || item.price)}</td>
-                    <td className="py-1 text-right align-top font-bold">{formatCurrency(item.totalPrice || ((item.unitPrice || item.price) * (item.quantity || 1)))}</td>
+                    <td className="py-1 font-bold text-right align-top">{formatCurrency(item.totalPrice || ((item.unitPrice || item.price) * (item.quantity || 1)))}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
             {/* Summary Breakdown */}
-            <div className="text-[11px] space-y-1 border-b border-slate-300 pb-2 font-semibold">
+              <div className="text-[11px] space-y-1 border-b-2 border-black pb-2 font-semibold print:border-black">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
                 <span>{formatCurrency(subtotal)}</span>
@@ -156,7 +328,7 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
                   <span>{formatCurrency(tax)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-sm font-black pt-1 border-t border-slate-300">
+                <div className="flex justify-between pt-1 text-sm font-black border-t-2 border-black print:border-black">
                 <span>TOTAL AMOUNT:</span>
                 <span>{formatCurrency(totalAmount)}</span>
               </div>
@@ -173,7 +345,7 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
                 <strong>{formatCurrency(amountPaid)}</strong>
               </div>
               {balanceDue > 0 && (
-                <div className="flex justify-between text-amber-800 font-bold">
+                <div className="flex justify-between font-bold text-amber-800">
                   <span>Balance Outstanding:</span>
                   <span>{formatCurrency(balanceDue)}</span>
                 </div>
@@ -181,9 +353,9 @@ export const PosReceiptModal = ({ isOpen, onClose, order, onNewBilling, nextActi
             </div>
 
             {/* Footer */}
-            <div className="text-center text-[10px] text-slate-500 space-y-1 pt-2 border-t border-dashed border-slate-300">
-              <p className="font-bold text-slate-800">Thank you for shopping at Sri Amman Store!</p>
-              <p>Please visit again • Fresh & Authentic Groceries</p>
+              <div className="text-center text-[10px] text-slate-500 space-y-1 pt-2 border-t-2 border-dashed border-black print:border-black">
+              <p className="font-bold text-slate-900">Thank you for shopping at Sri Amman Store!</p>
+              <p className="font-bold text-slate-600">Please visit again • Fresh & Authentic Groceries</p>
             </div>
           </div>
         </div>

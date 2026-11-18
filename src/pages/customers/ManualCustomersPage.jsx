@@ -154,6 +154,7 @@ export const ManualCustomersPage = () => {
   const [viewingCustomer, setViewingCustomer] = useState(null);
   const [showAllOrders, setShowAllOrders] = useState(false);
   const [printableCustomer, setPrintableCustomer] = useState(null);
+  const [printCardImmediately, setPrintCardImmediately] = useState(false);
   const [isGeneratingCard, setIsGeneratingCard] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [editForm, setEditForm] = useState(null);
@@ -163,23 +164,24 @@ export const ManualCustomersPage = () => {
   const notify = useNotification();
   const { currentUser } = useAuth();
 
+  useEffect(() => {
+    if (!printableCustomer || !printCardImmediately) return undefined;
+    const printTimer = window.setTimeout(() => window.print(), 200);
+    return () => window.clearTimeout(printTimer);
+  }, [printableCustomer, printCardImmediately]);
+
+  useEffect(() => {
+    const handleAfterPrint = () => setPrintCardImmediately(false);
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => window.removeEventListener('afterprint', handleAfterPrint);
+  }, []);
+
   const loadData = async () => {
     setLoading(true);
     try {
       const [orderData, customerData] = await Promise.all([getAllOrders({ manualOnly: true }), getAllCustomers()]);
       const manualOrders = orderData.filter((order) => order.orderSource === 'manual');
-      const manualCustomerIds = new Set(manualOrders.flatMap(getManualOrderCustomerIds));
-      const manualCustomerPhones = new Set(manualOrders.flatMap(getManualOrderPhones));
-
       const matches = customerData
-        .filter((customer) => {
-          const idCandidates = [customer.id, customer.customerId].filter(Boolean).map(String);
-          const phoneCandidates = getCustomerPhoneCandidates(customer);
-          return (
-            idCandidates.some((id) => manualCustomerIds.has(id)) ||
-            phoneCandidates.some((phone) => manualCustomerPhones.has(phone))
-          );
-        })
         .map((customer) => {
           const manualCustomerOrders = getOrdersForCustomer(customer, manualOrders).sort(
             (first, second) => new Date(second.createdAt || 0).getTime() - new Date(first.createdAt || 0).getTime()
@@ -247,23 +249,24 @@ export const ManualCustomersPage = () => {
     }
   };
 
-  const handleGenerateCustomerCard = async () => {
-    if (!viewingCustomer) return;
+  const handleGenerateCustomerCard = async (customer = viewingCustomer, printImmediately = false) => {
+    if (!customer) return;
     setIsGeneratingCard(true);
     try {
-      const customerId = viewingCustomer.customerId || viewingCustomer.id;
+      const customerId = customer.customerId || customer.id;
       const barcodeCanvas = document.createElement('canvas');
       JsBarcode(barcodeCanvas, String(customerId), {
         format: 'CODE128',
         width: 2,
-        height: 72,
-        displayValue: true,
+        height: printImmediately ? 48 : 72,
+        displayValue: !printImmediately,
         fontSize: 14,
         margin: 8,
         background: '#ffffff',
         lineColor: '#0f172a'
       });
-      setPrintableCustomer({ ...viewingCustomer, barcodeDataUrl: barcodeCanvas.toDataURL('image/png') });
+      setPrintableCustomer({ ...customer, barcodeDataUrl: barcodeCanvas.toDataURL('image/png'), stickerOnly: printImmediately });
+      setPrintCardImmediately(printImmediately);
     } catch (err) {
       notify.error('Failed to generate customer card', err.message);
     } finally {
@@ -428,6 +431,16 @@ export const ManualCustomersPage = () => {
           </button>
           <button
             type="button"
+            onClick={() => handleGenerateCustomerCard(row, true)}
+            disabled={isGeneratingCard}
+            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors disabled:opacity-50"
+            title="Print customer barcode"
+            aria-label={`Print ${row.name || 'customer'} barcode`}
+          >
+            <Printer className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
             onClick={() => setCustomerToDelete(row)}
             className="p-1.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
             title="Delete customer"
@@ -444,7 +457,7 @@ export const ManualCustomersPage = () => {
     <div className="space-y-6">
       <PageHeader
         title="Manual Customers"
-        subtitle="Registered customer profiles referenced by at least one manual order."
+        subtitle="Registered customer profiles and their linked manual orders."
         actions={
           <button
             onClick={loadData}
@@ -473,7 +486,7 @@ export const ManualCustomersPage = () => {
         columns={columns}
         data={filteredCustomers}
         loading={loading}
-        emptyTitle="No registered customers found for manual orders"
+        emptyTitle="No registered customers found"
       />
 
       <FormModal
@@ -508,7 +521,7 @@ export const ManualCustomersPage = () => {
               </div>
               <button
                 type="button"
-                onClick={handleGenerateCustomerCard}
+                onClick={() => handleGenerateCustomerCard(viewingCustomer)}
                 disabled={isGeneratingCard}
                 className="ml-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 disabled:opacity-60"
               >
@@ -709,11 +722,26 @@ export const ManualCustomersPage = () => {
                   margin: 0 !important;
                   box-shadow: none !important;
                 }
+                ${printableCustomer.stickerOnly ? `
+                  @page { size: 3.5in 2.1in; margin: 0; }
+                  html, body { width: 3.5in !important; height: 2.1in !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; }
+                  .manual-customer-print-card { left: 0 !important; top: 0 !important; transform: none !important; width: 3.5in !important; height: 2.1in !important; min-height: 0 !important; box-sizing: border-box !important; padding: 0.18in !important; border: 0 !important; overflow: hidden !important; display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 0.06in !important; }
+                ` : ''}
                 .manual-customer-print-controls { display: none !important; }
-                @page { margin: 0.35in; }
+                ${printableCustomer.stickerOnly ? '' : '@page { margin: 0.35in; }'}
               }
             `}</style>
             <div className="manual-customer-print-card mx-auto w-full max-w-sm rounded-xl border-2 border-slate-800 bg-white p-5 text-center shadow-sm">
+              {printableCustomer.stickerOnly ? (
+                <>
+                  <div className="max-w-full truncate text-sm font-bold text-slate-900">{printableCustomer.name || 'Customer'}</div>
+                  <img src={printableCustomer.barcodeDataUrl} alt="Customer ID Code 128 barcode" className="mx-auto h-[0.52in] w-[1.9in] object-contain" />
+                  <div className="font-mono text-xs font-semibold tracking-wide text-slate-900">
+                    {printableCustomer.customerId || printableCustomer.id}
+                  </div>
+                </>
+              ) : (
+                <>
               <div className="mb-4 border-b border-slate-200 pb-3">
                 <div className="text-xs font-black tracking-widest text-emerald-800">SRI AMMAN STORE</div>
                 <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Customer Card</div>
@@ -747,6 +775,8 @@ export const ManualCustomersPage = () => {
               <div className="mt-3 flex items-center justify-center border-t border-slate-100 pt-3">
                 <img src={printableCustomer.barcodeDataUrl} alt="Customer ID Code 128 barcode" className="h-auto max-h-24 max-w-full" />
               </div>
+                </>
+              )}
               <div className="manual-customer-print-controls mt-4 flex justify-center">
                 <button
                   type="button"
