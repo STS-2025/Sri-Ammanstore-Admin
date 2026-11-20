@@ -50,7 +50,7 @@ export const seedInitialCategories = async () => {
   }
 };
 
-export const getAllCategories = async () => {
+export const getAllCategories = async ({ requireRemote = false } = {}) => {
   if (!isFirebaseConfigured) {
     const stored = getStoredCategories();
     return stored;
@@ -64,6 +64,7 @@ export const getAllCategories = async () => {
     saveStoredCategories(sorted);
     return sorted;
   } catch (e) {
+    if (requireRemote) throw e;
     const stored = getStoredCategories();
     return stored;
   }
@@ -81,10 +82,6 @@ export const createCategory = async (catData, user) => {
     createdAt: new Date().toISOString()
   };
 
-  const current = getStoredCategories();
-  current.push(record);
-  saveStoredCategories(current);
-
   if (isFirebaseConfigured) {
     try {
       await setDoc(doc(db, COLLECTIONS.CATEGORIES, newId), {
@@ -93,8 +90,13 @@ export const createCategory = async (catData, user) => {
       });
     } catch (err) {
       console.error('[Firestore] Category write failed:', err);
+      throw err;
     }
   }
+
+  const current = getStoredCategories();
+  current.push(record);
+  saveStoredCategories(current);
 
   await logActivity({
     userId: user?.uid,

@@ -37,8 +37,8 @@ import {
   duplicateProduct,
   updateVariantPrice
 } from '../../firebase/productService';
-import { getAllCategories } from '../../firebase/categoryService';
-import { getAllBrands } from '../../firebase/brandService';
+import { createCategory, getAllCategories } from '../../firebase/categoryService';
+import { createBrand, getAllBrands } from '../../firebase/brandService';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -229,8 +229,28 @@ export const ProductsPage = () => {
     setImporting(true);
     try {
       const rows = readProductImportRows(await importExcelFile.text(), importExcelFile.name);
-      const categoryOptions = categories;
-      const productsToImport = groupProductImportRows(rows, categoryOptions, brands);
+      const [storedCategories, storedBrands] = await Promise.all([
+        getAllCategories({ requireRemote: true }),
+        getAllBrands({ requireRemote: true })
+      ]);
+      const categoryOptions = [...storedCategories];
+      const brandOptions = [...storedBrands];
+      const findByName = (items, name) => {
+        const normalizedName = String(name || '').trim().toLocaleLowerCase();
+        return items.find((item) => String(item.name || '').trim().toLocaleLowerCase() === normalizedName);
+      };
+
+      for (const name of new Set(rows.map((row) => row.categoryName.trim()).filter(Boolean))) {
+        if (findByName(categoryOptions, name)) continue;
+        const slug = name.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        categoryOptions.push(await createCategory({ name, slug }, currentUser));
+      }
+      for (const name of new Set(rows.map((row) => row.brandName.trim()).filter(Boolean))) {
+        if (findByName(brandOptions, name)) continue;
+        brandOptions.push(await createBrand({ name, origin: '', status: 'active' }, currentUser));
+      }
+
+      const productsToImport = groupProductImportRows(rows, categoryOptions, brandOptions);
       if (!productsToImport.length) throw new Error('The Excel file has no product rows to import.');
       const productIds = productsToImport.map((product) => String(product.__importProductId || '').trim().toLocaleLowerCase()).filter(Boolean);
       if (new Set(productIds).size !== productIds.length) throw new Error('Each distinct product must have a unique ProductID in the Excel file.');

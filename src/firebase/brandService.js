@@ -22,7 +22,7 @@ const saveStoredBrands = (brands) => {
   }
 };
 
-export const getAllBrands = async () => {
+export const getAllBrands = async ({ requireRemote = false } = {}) => {
   if (!isFirebaseConfigured) return getStoredBrands();
 
   try {
@@ -33,6 +33,7 @@ export const getAllBrands = async () => {
     saveStoredBrands(sorted);
     return sorted;
   } catch (error) {
+    if (requireRemote) throw error;
     return getStoredBrands();
   }
 };
@@ -48,15 +49,15 @@ export const createBrand = async (brandData, user) => {
     createdAt: new Date().toISOString()
   };
 
-  const current = getStoredBrands();
-  saveStoredBrands([...current, record]);
-
   if (isFirebaseConfigured) {
     await setDoc(doc(db, COLLECTIONS.BRANDS, id), {
       ...record,
       serverTimestamp: serverTimestamp()
     });
   }
+
+  const current = getStoredBrands();
+  saveStoredBrands([...current, record]);
 
   await logActivity({
     userId: user?.uid,
