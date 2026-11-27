@@ -53,6 +53,47 @@ const normalizeProductSearchText = (value = '') => String(value)
   .toLowerCase()
   .trim();
 
+const getProductVariants = (product) => (
+  Array.isArray(product.variants) && product.variants.length > 0
+    ? product.variants
+    : [{
+        id: `var-${product.id}`,
+        name: product.unit || '1 pkg',
+        sellingPrice: product.sellingPrice || product.price || 0,
+        mrp: product.mrp || product.sellingPrice || 0,
+        stock: product.stock || 0,
+        sku: product.sku || '',
+        barcode: product.barcode || ''
+      }]
+);
+
+const createProductSearchMatch = (product, variant) => ({
+  productId: product.id,
+  productName: product.name,
+  variantId: variant.id,
+  variantName: variant.name,
+  sku: variant.sku || product.sku,
+  barcode: variant.barcode || product.barcode,
+  sellingPrice: Number(variant.sellingPrice || variant.price || product.sellingPrice || 0),
+  mrp: Number(variant.mrp || product.mrp || variant.sellingPrice || 0),
+  stock: Number(variant.stock ?? product.stock ?? 10),
+  location: getStorageLocation(product, variant)
+});
+
+const findProductByBarcodeOrSku = (products, value) => {
+  const searchCode = normalizeProductSearchText(value);
+  if (!searchCode) return null;
+
+  for (const product of products) {
+    const variant = getProductVariants(product).find((candidate) =>
+      [candidate.barcode, candidate.sku, product.barcode, product.sku]
+        .some((code) => normalizeProductSearchText(code) === searchCode)
+    );
+    if (variant) return createProductSearchMatch(product, variant);
+  }
+  return null;
+};
+
 export const CreateManualOrderPage = () => {
   const notify = useNotification();
   const { currentUser, userRole } = useAuth();
@@ -551,6 +592,34 @@ export const CreateManualOrderPage = () => {
     setProductSearchQuery('');
     setShowProductDropdown(false);
   };
+
+  useEffect(() => {
+    const query = customerSearchQuery.trim().toLowerCase();
+    if (!query) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      const exactCustomer = customers.find((customer) =>
+        [customer.customerId, customer.id]
+          .filter(Boolean)
+          .some((id) => String(id).trim().toLowerCase() === query)
+      );
+      if (exactCustomer) handleSelectCustomer(exactCustomer);
+    }, 180);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [customerSearchQuery, customers]);
+
+  useEffect(() => {
+    const query = productSearchQuery.trim();
+    if (!query || !findProductByBarcodeOrSku(products, query)) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      const exactProduct = findProductByBarcodeOrSku(products, query);
+      if (exactProduct) handleAddToCart(exactProduct);
+    }, 180);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [productSearchQuery, products]);
 
   // Quantity Change in Cart
   /*const handleUpdateQuantity = (cartItemId, newQty) => {
@@ -1539,9 +1608,17 @@ export const CreateManualOrderPage = () => {
                         value={customerSearchQuery}
                         onChange={(e) => setCustomerSearchQuery(e.target.value)}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter' && filteredCustomers.length === 1) {
+                          if (event.key === 'Enter') {
+                            const query = customerSearchQuery.trim().toLowerCase();
+                            const exactCustomer = customers.find((customer) =>
+                              [customer.customerId, customer.id]
+                                .filter(Boolean)
+                                .some((id) => String(id).trim().toLowerCase() === query)
+                            );
+                            const customerToSelect = exactCustomer || (filteredCustomers.length === 1 ? filteredCustomers[0] : null);
+                            if (!customerToSelect) return;
                             event.preventDefault();
-                            handleSelectCustomer(filteredCustomers[0]);
+                            handleSelectCustomer(customerToSelect);
                           }
                         }}
                         placeholder="Search customer ID, name or mobile..."
@@ -1623,9 +1700,11 @@ export const CreateManualOrderPage = () => {
                   if (productSearchQuery.trim()) setShowProductDropdown(true);
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && filteredProducts[0] && filteredProducts[0].stock > 0) {
+                  if (e.key === 'Enter') {
+                    const productToAdd = findProductByBarcodeOrSku(products, productSearchQuery) || filteredProducts[0];
+                    if (!productToAdd || productToAdd.stock <= 0) return;
                     e.preventDefault();
-                    handleAddToCart(filteredProducts[0]);
+                    handleAddToCart(productToAdd);
                   }
                 }}
                 placeholder="Search product, barcode, SKU, brand..."
