@@ -19,6 +19,7 @@ import { VideoUploader } from '../common/VideoUploader';
 import { getAllCategories } from '../../firebase/categoryService';
 import { getAllBrands } from '../../firebase/brandService';
 import { formatCurrency } from '../../utils/formatters';
+import { normalizeProductType, PRODUCT_TYPES } from '../../utils/productTypes.js';
 
 const TABS = [
   { id: 'basic', label: '1. Basic Info', icon: Layers },
@@ -94,6 +95,7 @@ export const ProductFormModal = ({
     ingredients: '',
     usage: '',
     tags: '',
+    productType: '',
     hsnCode: '09103030',
     gstRate: 5,
     fssaiLicense: '',
@@ -189,6 +191,7 @@ export const ProductFormModal = ({
         ingredients: typeof initialData.ingredients === 'string' ? initialData.ingredients : '',
         usage: typeof initialData.usage === 'string' ? initialData.usage : '',
         tags: tagsFormatted,
+        productType: normalizeProductType(initialData.productType),
         hsnCode: String(initialData.hsnCode || '09103030'),
         gstRate: isNaN(Number(initialData.gstRate)) ? 5 : Number(initialData.gstRate),
         fssaiLicense: String(fssaiVal),
@@ -223,6 +226,7 @@ export const ProductFormModal = ({
         ingredients: '',
         usage: '',
         tags: '',
+        productType: '',
         hsnCode: '09103030',
         gstRate: 5,
         fssaiLicense: '',
@@ -372,7 +376,8 @@ export const ProductFormModal = ({
       frontImageUrl: img,
       tags: typeof formData.tags === 'string'
         ? formData.tags.split(',').map((t) => t.trim()).filter(Boolean)
-        : formData.tags
+        : formData.tags,
+      productType: normalizeProductType(formData.productType)
     };
     onSubmit(finalData);
   };
@@ -1153,6 +1158,19 @@ export const ProductFormModal = ({
 
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <span className="input-label mb-1">Visual Merchandising Tags</span>
+              <div>
+                <label className="input-label">Product Type</label>
+                <select
+                  value={formData.productType}
+                  onChange={(e) => setFormData({ ...formData, productType: e.target.value })}
+                  className="input-text text-xs"
+                >
+                  <option value="">Select product type</option>
+                  {PRODUCT_TYPES.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input

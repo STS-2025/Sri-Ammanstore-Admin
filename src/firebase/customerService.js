@@ -493,16 +493,44 @@ export const checkDuplicateCustomer = async ({ mobile, email }) => {
   return { isDuplicate: false };
 };
 
+export const checkDuplicateCustomerId = async (customerId) => {
+  const normalizedId = String(customerId || '').trim().toLowerCase();
+  if (!normalizedId) return { isDuplicate: false };
+
+  const custs = await getAllCustomers();
+  const customer = custs.find((entry) =>
+    [entry.customerId, entry.id]
+      .filter(Boolean)
+      .some((id) => String(id).trim().toLowerCase() === normalizedId)
+  );
+  return customer
+    ? { isDuplicate: true, customer }
+    : { isDuplicate: false };
+};
+
 /**
- * Create a new Customer with auto-generated ID, Barcode & Ledger
+ * Create a new customer with the barcode ID provided by the user.
  */
 export const createNewCustomer = async (customerData, user) => {
+  const customerId = String(customerData.customerId || '').trim();
+  if (!customerId) {
+    throw new Error('Customer ID is required.');
+  }
+
+  const customerIdCheck = await checkDuplicateCustomerId(customerId);
+  if (customerIdCheck.isDuplicate) {
+    const error = new Error(`Customer ID ${customerId} is already assigned to ${customerIdCheck.customer.name || 'another customer'}.`);
+    error.code = 'CUSTOMER_ID_DUPLICATE';
+    error.customer = customerIdCheck.customer;
+    throw error;
+  }
+
   const dupCheck = await checkDuplicateCustomer({ mobile: customerData.mobile, email: customerData.email });
   if (dupCheck.isDuplicate) {
     throw new Error(`Customer with mobile/email already exists (${dupCheck.customer.customerId || dupCheck.customer.id} - ${dupCheck.customer.name})`);
   }
 
-  const generatedId = customerData.customerId || (await generateNextCustomerId());
+  const generatedId = customerId;
   const docId = `cust-${Date.now().toString(36)}`;
 
   const newCust = {

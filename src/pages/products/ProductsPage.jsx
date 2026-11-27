@@ -443,34 +443,39 @@ export const ProductsPage = () => {
       key: 'merchandising',
       header: 'Merchandising Tags',
       render: (row) => (
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => handleToggleBadge(row, 'isFeatured')}
-            className={`p-1 rounded transition-colors ${
-              row.isFeatured ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-slate-500'
-            }`}
-            title="Toggle Featured"
-          >
-            <Star className="w-3.5 h-3.5 fill-current" />
-          </button>
-          <button
-            onClick={() => handleToggleBadge(row, 'isBestSeller')}
-            className={`p-1 rounded transition-colors ${
-              row.isBestSeller ? 'text-rose-500 bg-rose-50' : 'text-slate-300 hover:text-slate-500'
-            }`}
-            title="Toggle Best Seller"
-          >
-            <Flame className="w-3.5 h-3.5 fill-current" />
-          </button>
-          <button
-            onClick={() => handleToggleBadge(row, 'isOffer')}
-            className={`p-1 rounded transition-colors ${
-              row.isOffer ? 'text-emerald-600 bg-emerald-50' : 'text-slate-300 hover:text-slate-500'
-            }`}
-            title="Toggle Offer"
-          >
-            <Tag className="w-3.5 h-3.5" />
-          </button>
+        <div className="space-y-1">
+          <span className="block text-[10px] font-semibold text-slate-600">
+            Product Type: {row.productType || '—'}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => handleToggleBadge(row, 'isFeatured')}
+              className={`p-1 rounded transition-colors ${
+                row.isFeatured ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-slate-500'
+              }`}
+              title="Toggle Featured"
+            >
+              <Star className="w-3.5 h-3.5 fill-current" />
+            </button>
+            <button
+              onClick={() => handleToggleBadge(row, 'isBestSeller')}
+              className={`p-1 rounded transition-colors ${
+                row.isBestSeller ? 'text-rose-500 bg-rose-50' : 'text-slate-300 hover:text-slate-500'
+              }`}
+              title="Toggle Best Seller"
+            >
+              <Flame className="w-3.5 h-3.5 fill-current" />
+            </button>
+            <button
+              onClick={() => handleToggleBadge(row, 'isOffer')}
+              className={`p-1 rounded transition-colors ${
+                row.isOffer ? 'text-emerald-600 bg-emerald-50' : 'text-slate-300 hover:text-slate-500'
+              }`}
+              title="Toggle Offer"
+            >
+              <Tag className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )
     },

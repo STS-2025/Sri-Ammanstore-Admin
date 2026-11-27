@@ -395,6 +395,9 @@ export const updateItemPickStatus = async (orderId, itemId, newPickStatus, user)
   const orders = await getAllOrders();
   const index = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId || o.orderId === orderId);
   if (index === -1) throw new Error(`Order ${orderId} not found`);
+  if (!['pending', 'picked', 'packed'].includes(newPickStatus)) {
+    throw new Error(`Invalid item pick status: ${newPickStatus}`);
+  }
 
   const order = { ...orders[index] };
   const targetDocId = order.id || orderId;
@@ -414,10 +417,6 @@ export const updateItemPickStatus = async (orderId, itemId, newPickStatus, user)
   }));
 
   let itemIndex = items.findIndex((i, idx) => i.id === itemId || i.sku === itemId || `item-${idx}` === itemId || String(idx) === String(itemId) || i.productName === itemId);
-  if (itemIndex === -1 && items.length > 0) {
-    itemIndex = 0; // Fallback to first item if single item order
-  }
-
   if (itemIndex === -1) throw new Error('Item not found in order');
 
   items[itemIndex] = {
@@ -427,26 +426,33 @@ export const updateItemPickStatus = async (orderId, itemId, newPickStatus, user)
 
   order.items = items;
 
-  // If all items are packed, advance order status to 'packed'
-  const allPacked = items.every((i) => i.pickStatus === 'packed' || i.pickStatus === 'replaced');
-  if (allPacked && order.status !== 'packed' && order.status !== 'out_for_delivery' && order.status !== 'delivered' && order.status !== 'cancelled') {
-    order.status = 'packed';
-    order.packedAt = new Date().toISOString();
-    order.packedBy = user?.displayName || user?.email || 'Packing Staff';
-    order.timeline = order.timeline || [];
+  const hasPackingProgress = items.some((item) => item.pickStatus !== 'pending');
+  const allItemsResolved = items.length > 0 &&
+    items.every((item) => ['packed', 'replaced', 'unavailable'].includes(item.pickStatus));
+  order.timeline = order.timeline || [];
+
+  if (order.status === 'confirmed' && hasPackingProgress) {
+    order.status = 'picking';
     order.timeline.push({
-      status: 'packed',
-      label: 'All Items Picked & Verified',
+      status: 'picking',
+      label: 'Picking In Progress',
       timestamp: new Date().toISOString(),
       actor: user?.displayName || user?.email || 'Packing Staff'
     });
   }
 
-  // Update LocalStorage
-  const stored = getStoredOrders();
-  const sIdx = stored.findIndex((o) => o.id === targetDocId || o.orderNumber === order.orderNumber);
-  if (sIdx !== -1) { stored[sIdx] = order; } else { stored.unshift(order); }
-  saveStoredOrders(stored);
+  const hasPackedItems = items.some((item) => ['packed', 'replaced'].includes(item.pickStatus));
+  if (allItemsResolved && hasPackedItems && ['confirmed', 'picking'].includes(order.status)) {
+    order.status = 'packed';
+    order.packedAt = new Date().toISOString();
+    order.packedBy = user?.displayName || user?.email || 'Packing Staff';
+    order.timeline.push({
+      status: 'packed',
+      label: 'All Items Packed or Resolved',
+      timestamp: new Date().toISOString(),
+      actor: user?.displayName || user?.email || 'Packing Staff'
+    });
+  }
 
   // Update Firestore
   if (isFirebaseConfigured) {
@@ -462,8 +468,14 @@ export const updateItemPickStatus = async (orderId, itemId, newPickStatus, user)
       }, { merge: true });
     } catch (e) {
       console.error('[Firestore] updateItemPickStatus setDoc failed:', e);
+      throw e;
     }
   }
+
+  const stored = getStoredOrders();
+  const sIdx = stored.findIndex((o) => o.id === targetDocId || o.orderNumber === order.orderNumber);
+  if (sIdx !== -1) { stored[sIdx] = order; } else { stored.unshift(order); }
+  saveStoredOrders(stored);
 
   await logActivity({
     userId: user?.uid,
@@ -495,6 +507,17 @@ export const handleUnavailableProduct = async ({
   const orders = await getAllOrders();
   const index = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId || o.orderId === orderId);
   if (index === -1) throw new Error(`Order ${orderId} not found`);
+  if (!['replace', 'partial_fulfill', 'cancel_item'].includes(action)) {
+    throw new Error(`Invalid unavailable-item action: ${action}`);
+  }
+  if (!String(reason || '').trim()) throw new Error('A reason is required to resolve an unavailable item.');
+  if (action === 'replace' && (!replacementVariant || !replacementVariant.variantId)) {
+    throw new Error('Select an available replacement item before continuing.');
+  }
+  if (action === 'partial_fulfill' &&
+    (!Number.isInteger(Number(partialQty)) || Number(partialQty) < 1)) {
+    throw new Error('Enter a valid quantity for partial fulfillment.');
+  }
 
   const order = { ...orders[index] };
   const targetDocId = order.id || orderId;
@@ -514,7 +537,6 @@ export const handleUnavailableProduct = async ({
   }));
 
   let itemIndex = items.findIndex((i, idx) => i.id === itemId || i.sku === itemId || `item-${idx}` === itemId || String(idx) === String(itemId));
-  if (itemIndex === -1 && items.length > 0) itemIndex = 0;
   if (itemIndex === -1) throw new Error('Item not found in order');
 
   const targetItem = items[itemIndex];
@@ -529,7 +551,7 @@ export const handleUnavailableProduct = async ({
     targetItem.barcode = replacementVariant.barcode;
     targetItem.unitPrice = replacementVariant.sellingPrice;
     targetItem.totalPrice = replacementVariant.sellingPrice * targetItem.quantity;
-    targetItem.pickStatus = 'replaced';
+    targetItem.pickStatus = 'picked';
     targetItem.replacementNote = `Replaced with ${replacementVariant.productName} (${replacementVariant.variantName})`;
 
     order.timeline.push({
@@ -552,7 +574,10 @@ export const handleUnavailableProduct = async ({
       reason
     });
   } else if (action === 'partial_fulfill') {
-    targetItem.quantity = Math.max(1, Number(partialQty));
+    if (Number(partialQty) > targetItem.quantity) {
+      throw new Error(`Partial quantity cannot exceed the ordered quantity (${targetItem.quantity}).`);
+    }
+    targetItem.quantity = Number(partialQty);
     targetItem.totalPrice = targetItem.unitPrice * targetItem.quantity;
     targetItem.pickStatus = 'picked';
     targetItem.partialNote = `Partially packed: ${partialQty} units`;
@@ -572,11 +597,30 @@ export const handleUnavailableProduct = async ({
   order.gstAmount = Math.round(newSubtotal * 0.05);
   order.totalAmount = Math.max(0, newSubtotal + order.gstAmount + (order.deliveryFee || 0) - (order.discountAmount || 0));
 
-  // Local Storage update
-  const stored = getStoredOrders();
-  const sIdx = stored.findIndex((o) => o.id === targetDocId || o.orderNumber === order.orderNumber);
-  if (sIdx !== -1) { stored[sIdx] = order; } else { stored.unshift(order); }
-  saveStoredOrders(stored);
+  const hasPackingProgress = items.some((item) => item.pickStatus !== 'pending');
+  const allItemsResolved = items.length > 0 &&
+    items.every((item) => ['packed', 'replaced', 'unavailable'].includes(item.pickStatus));
+  if (order.status === 'confirmed' && hasPackingProgress) {
+    order.status = 'picking';
+    order.timeline.push({
+      status: 'picking',
+      label: 'Picking In Progress',
+      timestamp: new Date().toISOString(),
+      actor: user?.displayName || user?.email || 'Packing Staff'
+    });
+  }
+  const hasPackedItems = items.some((item) => ['packed', 'replaced'].includes(item.pickStatus));
+  if (allItemsResolved && hasPackedItems && ['confirmed', 'picking'].includes(order.status)) {
+    order.status = 'packed';
+    order.packedAt = new Date().toISOString();
+    order.packedBy = user?.displayName || user?.email || 'Packing Staff';
+    order.timeline.push({
+      status: 'packed',
+      label: 'All Items Packed or Resolved',
+      timestamp: new Date().toISOString(),
+      actor: user?.displayName || user?.email || 'Packing Staff'
+    });
+  }
 
   // Firestore update
   if (isFirebaseConfigured) {
@@ -592,8 +636,14 @@ export const handleUnavailableProduct = async ({
       }, { merge: true });
     } catch (e) {
       console.error('[Firestore] handleUnavailableProduct setDoc failed:', e);
+      throw e;
     }
   }
+
+  const stored = getStoredOrders();
+  const sIdx = stored.findIndex((o) => o.id === targetDocId || o.orderNumber === order.orderNumber);
+  if (sIdx !== -1) { stored[sIdx] = order; } else { stored.unshift(order); }
+  saveStoredOrders(stored);
 
   await logActivity({
     userId: user?.uid,

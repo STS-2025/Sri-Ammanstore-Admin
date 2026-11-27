@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import { X, UserPlus, Camera, Upload, CheckCircle2, User, Phone, Mail, MapPin, Calendar, CreditCard, ShieldCheck, Printer } from 'lucide-react';
-import { createNewCustomer, generateNextCustomerId, checkDuplicateCustomer, getAllCustomers } from '../../firebase/customerService';
+import { createNewCustomer, checkDuplicateCustomerId, checkDuplicateCustomer, getAllCustomers } from '../../firebase/customerService';
 import { getAllOrders } from '../../firebase/orderService';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../hooks/useAuth';
 
-export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelectForBilling = true, availableAreas = [] }) => {
+const EMPTY_AREAS = [];
+
+export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelectForBilling = true, availableAreas = EMPTY_AREAS }) => {
   const notify = useNotification();
   const { userRole, currentUser } = useAuth();
 
@@ -36,6 +38,17 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
   const [showAddressDetails, setShowAddressDetails] = useState(false);
   const [barcodePrompt, setBarcodePrompt] = useState(null);
   const [printCustomer, setPrintCustomer] = useState(null);
+  const [duplicateCustomerId, setDuplicateCustomerId] = useState(null);
+  const customerIdInputRef = useRef(null);
+  const customerNameInputRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setFormData((prev) => ({ ...prev, customerId: '' }));
+      setDuplicateWarning(null);
+      setDuplicateCustomerId(null);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (!barcodePrompt) return undefined;
@@ -68,10 +81,6 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
 
   useEffect(() => {
     if (isOpen) {
-      // Auto-generate Customer ID preview
-      generateNextCustomerId().then((id) => {
-        setFormData((prev) => ({ ...prev, customerId: id }));
-      });
       Promise.all([getAllCustomers(), getAllOrders({ manualOnly: true })]).then(([customers, manualOrders]) => {
         const uniqueAreas = [...new Set([
           ...availableAreas,
@@ -81,7 +90,6 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
           .sort((a, b) => a.localeCompare(b));
         setAreas(uniqueAreas);
       }).catch(() => setAreas([]));
-      setDuplicateWarning(null);
     }
   }, [isOpen, availableAreas]);
 
@@ -97,6 +105,35 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
     if (name === 'mobile' || name === 'email') {
       setDuplicateWarning(null);
     }
+    if (name === 'customerId') setDuplicateCustomerId(null);
+  };
+
+  const validateCustomerId = async (focusName = false) => {
+    const customerId = formData.customerId.trim();
+    if (!customerId) return false;
+
+    try {
+      const result = await checkDuplicateCustomerId(customerId);
+      if (result.isDuplicate) {
+        setDuplicateCustomerId({
+          customerId,
+          customer: result.customer
+        });
+        return false;
+      }
+      setDuplicateCustomerId(null);
+      if (focusName) customerNameInputRef.current?.focus();
+      return true;
+    } catch (error) {
+      notify.error('Customer ID Check Failed', error.message);
+      return false;
+    }
+  };
+
+  const dismissDuplicateCustomerId = () => {
+    setDuplicateCustomerId(null);
+    setFormData((prev) => ({ ...prev, customerId: '' }));
+    window.requestAnimationFrame(() => customerIdInputRef.current?.focus());
   };
 
   const handleMobileBlur = async () => {
@@ -126,9 +163,10 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
     }
   };
 
-  const requestSubmit = (e, selectForBilling) => {
+  const requestSubmit = async (e, selectForBilling) => {
     e.preventDefault();
     if (loading || barcodePrompt) return;
+    if (!(await validateCustomerId())) return;
     setBarcodePrompt({ selectForBilling, printBarcode: true });
   };
 
@@ -166,7 +204,14 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
       }
       if (!shouldPrintBarcode) onClose();
     } catch (err) {
-      notify.error('Registration Failed', err.message);
+      if (err.code === 'CUSTOMER_ID_DUPLICATE') {
+        setDuplicateCustomerId({
+          customerId: formData.customerId.trim(),
+          customer: err.customer || { name: 'another customer' }
+        });
+      } else {
+        notify.error('Registration Failed', err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -211,15 +256,29 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
             </h3>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {/* Customer ID (Auto Generated) */}
+              {/* Customer ID / Barcode */}
               <div>
-                <label className="block mb-1 text-xs font-bold text-slate-700">Customer ID (Auto Generated)</label>
+                <label className="block mb-1 text-xs font-bold text-slate-700">
+                  Customer ID / Barcode <span className="text-rose-500">*</span>
+                </label>
                 <input
                   type="text"
                   name="customerId"
+                  ref={customerIdInputRef}
                   value={formData.customerId}
-                  readOnly
-                  className="w-full px-3 py-2 font-mono text-xs font-bold border cursor-not-allowed bg-slate-100 border-slate-300 rounded-xl text-slate-600 focus:outline-none"
+                  onChange={handleChange}
+                  onBlur={() => validateCustomerId()}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      validateCustomerId(true);
+                    }
+                  }}
+                  placeholder="Enter or scan customer barcode"
+                  autoComplete="off"
+                  autoFocus
+                  required
+                  className="w-full px-3 py-2 font-mono text-xs font-bold border bg-white border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                 />
               </div>
 
@@ -233,6 +292,7 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
                   name="name"
                   value={formData.name}
                   onChange={handleChange}
+                  ref={customerNameInputRef}
                   placeholder="e.g. Mari Selvam"
                   required
                   className="w-full px-3 py-2 text-xs font-semibold bg-white border border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
@@ -449,6 +509,51 @@ export const NewCustomerModal = ({ isOpen, onClose, onCustomerCreated, autoSelec
             )}
           </div>
         </form>
+
+        {duplicateCustomerId && (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="duplicate-customer-id-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                dismissDuplicateCustomerId();
+              }
+            }}
+          >
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
+              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <h3 id="duplicate-customer-id-title" className="mt-3 text-base font-bold text-slate-900">Customer ID already assigned</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Barcode ID <strong className="font-mono">{duplicateCustomerId.customerId}</strong> is already assigned to this customer:
+              </p>
+              <div className="mt-3 rounded-xl bg-slate-50 p-3 text-left text-sm text-slate-700">
+                <p><span className="font-semibold">Name:</span> {duplicateCustomerId.customer.name || 'Name unavailable'}</p>
+                {(duplicateCustomerId.customer.mobile || duplicateCustomerId.customer.phone) && (
+                  <p className="mt-1"><span className="font-semibold">Mobile:</span> {duplicateCustomerId.customer.mobile || duplicateCustomerId.customer.phone}</p>
+                )}
+                {(duplicateCustomerId.customer.address?.area || duplicateCustomerId.customer.area) && (
+                  <p className="mt-1"><span className="font-semibold">Area:</span> {duplicateCustomerId.customer.address?.area || duplicateCustomerId.customer.area}</p>
+                )}
+                {duplicateCustomerId.customer.email && (
+                  <p className="mt-1"><span className="font-semibold">Email:</span> {duplicateCustomerId.customer.email}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                autoFocus
+                onClick={dismissDuplicateCustomerId}
+                className="mt-5 rounded-xl bg-emerald-700 px-5 py-2 text-sm font-bold text-white hover:bg-emerald-800"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        )}
 
         {barcodePrompt && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="barcode-prompt-title">

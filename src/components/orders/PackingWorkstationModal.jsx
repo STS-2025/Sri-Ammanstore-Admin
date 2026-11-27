@@ -20,6 +20,16 @@ import { getAllProducts } from '../../firebase/productService';
 import { useNotification } from '../../context/NotificationContext';
 import { usePermissions } from '../../hooks/usePermissions';
 
+const normalizeScanCode = (value) => String(value || '')
+  .replace(/[\u0000-\u001f\u007f]/g, '')
+  .trim()
+  .toUpperCase();
+
+const normalizeItemName = (value) => String(value || '')
+  .trim()
+  .replace(/\s+/g, '')
+  .toUpperCase();
+
 export const PackingWorkstationModal = ({
   isOpen,
   onClose,
@@ -44,7 +54,11 @@ export const PackingWorkstationModal = ({
 
   useEffect(() => {
     setActiveOrder(order);
-    getAllProducts().then(setAllProducts);
+    if (isOpen) {
+      getAllProducts()
+        .then(setAllProducts)
+        .catch((err) => notify.error('Failed to load replacement products', err.message));
+    }
   }, [order, isOpen]);
 
   if (!isOpen || !activeOrder) return null;
@@ -55,21 +69,107 @@ export const PackingWorkstationModal = ({
     const cleanCode = scannedBarcode.trim();
     if (!cleanCode) return;
 
-    const matchedItem = (activeOrder.items || []).find((i) => i.barcode === cleanCode || i.sku.toLowerCase() === cleanCode.toLowerCase());
+    const normalizedCode = normalizeScanCode(cleanCode);
+    const orderItems = activeOrder.items || [];
+    const isUnresolved = (item) => !['packed', 'replaced', 'unavailable'].includes(item.pickStatus);
+    const findOrderItem = (matches) =>
+      matches.find(isUnresolved) || matches[0];
+    const getItemCodes = (item) => [
+      item.barcode,
+      item.sku,
+      item.productBarcode,
+      item.productSku,
+      item.product?.barcode,
+      item.product?.sku,
+      item.variant?.barcode,
+      item.variant?.sku,
+      item.variantBarcode,
+      item.productVariantBarcode,
+      item.productDetails?.barcode,
+      item.productDetails?.sku,
+      item.variantDetails?.barcode,
+      item.variantDetails?.sku
+    ];
+    let matchedItem = findOrderItem(orderItems.filter((item) =>
+      getItemCodes(item).some((code) => normalizeScanCode(code) === normalizedCode)
+    ));
+
+    let products = allProducts;
+    if (!matchedItem) {
+      if (!products.length) {
+        try {
+          products = await getAllProducts();
+          setAllProducts(products);
+        } catch (err) {
+          notify.error('Failed to load products for barcode verification', err.message);
+          return;
+        }
+      }
+
+      const matchedVariant = products
+        .flatMap((product) => (product.variants || []).map((variant) => ({ product, variant })))
+        .find(({ product, variant }) =>
+          [variant.barcode, variant.sku, product.barcode, product.sku]
+            .some((code) => normalizeScanCode(code) === normalizedCode)
+        );
+
+      if (matchedVariant) {
+        const { product, variant } = matchedVariant;
+        const productName = normalizeItemName(product.name);
+        const variantName = normalizeItemName(variant.name);
+        const orderItemsForProduct = orderItems.filter((item) => {
+          const itemProductId = item.productId || item.productID || item.productDocId ||
+            item.product?.id || item.productDetails?.id;
+          const itemProductName = item.productName || item.productTitle || item.name ||
+            item.product?.name || item.productDetails?.name;
+          return (itemProductId && String(itemProductId) === String(product.id)) ||
+            normalizeItemName(itemProductName) === productName;
+        });
+        matchedItem = findOrderItem(orderItemsForProduct.filter((item) => {
+          const itemVariantId = item.variantId || item.variantID || item.productVariantId ||
+            item.variant?.id || item.variantDetails?.id;
+          const itemVariantName = item.variantName || item.packSize || item.weight || item.unit ||
+            item.productVariantName || item.variant?.name || item.variantDetails?.name;
+          if (itemVariantId) return String(itemVariantId) === String(variant.id);
+          return itemVariantName && normalizeItemName(itemVariantName) === variantName;
+        }));
+        if (!matchedItem && orderItemsForProduct.length === 1) {
+          matchedItem = orderItemsForProduct[0];
+        }
+      }
+    }
 
     if (matchedItem) {
+      if (['packed', 'unavailable'].includes(matchedItem.pickStatus)) {
+        notify.info('Item Already Resolved', `${matchedItem.productName} is already ${matchedItem.pickStatus}.`);
+        setScannedBarcode('');
+        return;
+      }
+
       try {
         const nextStatus = matchedItem.pickStatus === 'pending' ? 'picked' : 'packed';
         const updated = await updateItemPickStatus(activeOrder.id, matchedItem.id, nextStatus, currentUser);
         setActiveOrder(updated);
-        notify.success('Item Verified & Packed', `${matchedItem.productName} marked as ${nextStatus}!`);
+        notify.success(
+          nextStatus === 'picked' ? 'Item Picked' : 'Item Packed',
+          `${matchedItem.productName} marked as ${nextStatus}.`
+        );
         setScannedBarcode('');
         if (onOrderUpdated) onOrderUpdated(updated);
       } catch (err) {
         notify.error('Verification Error', err.message);
       }
     } else {
-      notify.error('Barcode Mismatch', `No item matching barcode "${cleanCode}" in this order.`);
+      const catalogMatch = products.some((product) =>
+        [product.barcode, product.sku, ...(product.variants || []).flatMap((variant) => [variant.barcode, variant.sku])]
+          .some((code) => normalizeScanCode(code) === normalizedCode)
+      );
+      notify.error(
+        'Barcode Mismatch',
+        catalogMatch
+          ? `This barcode belongs to a product that is not in order ${activeOrder.orderNumber}.`
+          : `No product in the catalog matches barcode "${cleanCode}".`
+      );
     }
   };
 
@@ -118,7 +218,11 @@ export const PackingWorkstationModal = ({
     }
   };
 
-  const allPacked = (activeOrder.items || []).every((i) => i.pickStatus === 'packed' || i.pickStatus === 'replaced');
+  const items = activeOrder.items || [];
+  const allItemsResolved = items.length > 0 &&
+    items.every((item) => ['packed', 'replaced', 'unavailable'].includes(item.pickStatus));
+  const hasPackedItems = items.some((item) => ['packed', 'replaced'].includes(item.pickStatus));
+  const readyToPrint = allItemsResolved && hasPackedItems;
 
   // Available alternative variants across products
   const availableReplacements = [];
@@ -164,7 +268,7 @@ export const PackingWorkstationModal = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {allPacked && (
+            {readyToPrint && (
               <button
                 onClick={() => onOpenPrint && onOpenPrint(activeOrder)}
                 className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5"
@@ -194,7 +298,7 @@ export const PackingWorkstationModal = ({
                 type="text"
                 value={scannedBarcode}
                 onChange={(e) => setScannedBarcode(e.target.value)}
-                placeholder="Scan item barcode to instantly verify & pack..."
+                placeholder="Scan once to pick, then scan again to pack..."
                 autoFocus
                 className="input-text pl-9 text-xs font-mono py-1.5"
               />
@@ -313,9 +417,16 @@ export const PackingWorkstationModal = ({
                       </span>
                     )}
 
+                    {item.pickStatus === 'replaced' && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-300">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Replacement Packed</span>
+                      </span>
+                    )}
+
                     {item.pickStatus === 'unavailable' && (
                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300">
-                        <span>Unavailable</span>
+                        <span>Resolved - Not Packed</span>
                       </span>
                     )}
                   </div>
@@ -334,14 +445,18 @@ export const PackingWorkstationModal = ({
           </div>
 
           <div>
-            {allPacked ? (
+            {readyToPrint ? (
               <span className="text-emerald-700 font-bold flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4" />
-                All Items Successfully Packed & Ready for Label!
+                All items resolved; parcel is ready for its label.
+              </span>
+            ) : allItemsResolved ? (
+              <span className="text-amber-700 font-semibold">
+                No packable items remain; no shipping label can be printed.
               </span>
             ) : (
               <span className="text-slate-500">
-                Please scan or pack all items to complete order.
+                Pick each item, then pack it. Resolve unavailable items to complete the checklist.
               </span>
             )}
           </div>

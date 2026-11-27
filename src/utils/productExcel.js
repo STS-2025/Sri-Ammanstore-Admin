@@ -1,10 +1,12 @@
+import { normalizeProductType } from './productTypes.js';
+
 // Canonical product import fields. Alias fields (nameTamil, fssaiNumber,
 // imageUrl, price) are intentionally omitted because the product form already
 // maps them to these canonical fields.
 export const PRODUCT_IMPORT_COLUMNS = [
   'ProductID', 'name', 'tamilName', 'categoryName', 'subCategory',
   'brandName', 'description', 'benefits', 'ingredients', 'usage',
-  'tags', 'hsnCode', 'gstRate', 'fssaiLicense', 'status', 'isFeatured',
+  'tags', 'productType', 'hsnCode', 'gstRate', 'fssaiLicense', 'status', 'isFeatured',
   'isBestSeller', 'isNew', 'isOffer', 'rankingScore', 'frontImageUrl',
   'backImageUrl', 'videoUrl', 'variantName', 'weight', 'unit', 'sku',
   'barcode', 'purchasePrice', 'mrp', 'sellingPrice', 'stock', 'safetyStock',
@@ -13,7 +15,8 @@ export const PRODUCT_IMPORT_COLUMNS = [
 
 const EXCEL_HEADERS = {
   categoryName: 'Category Name',
-  brandName: 'Brand Name'
+  brandName: 'Brand Name',
+  productType: 'Product Type'
 };
 
 const SAMPLE_NAME_PREFIX = '[SAMPLE - DO NOT IMPORT]';
@@ -38,6 +41,7 @@ const SAMPLE_PRODUCT_ROW = {
   ingredients: 'Turmeric powder',
   usage: 'Example: use in cooking',
   tags: 'sample, turmeric, spices',
+  productType: 'Veg, Non-Veg, Others',
   hsnCode: '09103030',
   gstRate: '5',
   fssaiLicense: '12345678901234',
@@ -67,6 +71,7 @@ const SAMPLE_PRODUCT_ROW = {
 const normalizeHeader = (header) => {
   const value = String(header || '').trim();
   if (value.toLocaleLowerCase() === 'productid' || value.toLocaleLowerCase() === 'product id') return 'ProductID';
+  if (value.toLocaleLowerCase() === 'product type' || value.toLocaleLowerCase() === 'producttype') return 'productType';
   if (value.toLocaleLowerCase() === 'category name') return 'categoryName';
   if (value.toLocaleLowerCase() === 'brand name') return 'brandName';
   return value;
@@ -128,7 +133,9 @@ export const readProductImportRows = (text, fileName) => {
   const headers = rows[0].map(normalizeHeader);
   const duplicates = headers.filter((header, index) => header && headers.indexOf(header) !== index);
   if (duplicates.length) throw new Error(`Duplicate columns found: ${[...new Set(duplicates)].join(', ')}`);
-  const missing = PRODUCT_IMPORT_COLUMNS.filter((column) => !headers.includes(column));
+  const missing = PRODUCT_IMPORT_COLUMNS.filter((column) =>
+    column !== 'productType' && !headers.includes(column)
+  );
   if (missing.length) throw new Error(`The template is missing columns: ${missing.join(', ')}. Download the latest product format from Settings.`);
   return rows.slice(1).filter((row) => row.some((value) => String(value ?? '').trim() !== '')).map((row, rowIndex) => {
     const record = Object.fromEntries(headers.map((header, index) => [header, String(row[index] ?? '').trim()]));
@@ -155,6 +162,10 @@ export const groupProductImportRows = (rows, categories = [], brands = []) => {
   const grouped = new Map();
   rows.forEach((row) => {
     if (!row.name) throw new Error(`Row ${row.__rowNumber}: product name is required.`);
+    const productType = normalizeProductType(row.productType);
+    if (row.productType && !productType) {
+      throw new Error(`Row ${row.__rowNumber}: Product Type must be Veg, Non-Veg, or Others.`);
+    }
     const category = categories.find((item) => item.name?.trim().toLocaleLowerCase() === row.categoryName?.trim().toLocaleLowerCase());
     if (!category) throw new Error(`Row ${row.__rowNumber}: category "${row.categoryName || '(blank)'}" was not found. Use a category name from your store.`);
     const brand = brands.find((item) => item.name?.trim().toLocaleLowerCase() === row.brandName?.trim().toLocaleLowerCase());
@@ -171,6 +182,7 @@ export const groupProductImportRows = (rows, categories = [], brands = []) => {
         brandName: brand.name, description: row.description, benefits: row.benefits,
         ingredients: row.ingredients, usage: row.usage,
         tags: row.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+        productType,
         hsnCode: row.hsnCode, gstRate: asNumber(row.gstRate, 'gstRate', row.__rowNumber, 0),
         fssaiLicense: row.fssaiLicense, fssaiNumber: row.fssaiLicense,
         status: row.status || 'active',
@@ -184,6 +196,10 @@ export const groupProductImportRows = (rows, categories = [], brands = []) => {
       });
     }
     const product = grouped.get(productKey);
+    if (product.productType && productType && product.productType !== productType) {
+      throw new Error(`Row ${row.__rowNumber}: all pack rows for "${product.name}" must use the same Product Type.`);
+    }
+    if (!product.productType && productType) product.productType = productType;
     if (product.__importProductId && row.ProductID && product.__importProductId.trim().toLocaleLowerCase() !== row.ProductID.trim().toLocaleLowerCase()) {
       throw new Error(`Row ${row.__rowNumber}: all pack rows for "${product.name}" must use the same ProductID.`);
     }
